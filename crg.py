@@ -4,7 +4,7 @@ crg.py: Counting Regular Grammars implementation
 
 
 class RuleItem:
-    def __init__(self, terminal, nonterminal, action):
+    def __init__(self, terminal=None, nonterminal=None, action=None):
         assert (terminal is None) != (nonterminal is None)
         self.terminal = terminal
         self.nonterminal = nonterminal
@@ -62,7 +62,7 @@ class RuleItem:
     def rewrite(self, source, target):
         if self.is_terminal() or self.nonterminal != source:
             return self
-        return RuleItem(None, target, self.action)
+        return RuleItem(nonterminal=target, action=self.action)
 
 
 class ProductionRule:
@@ -95,10 +95,14 @@ class ProductionRule:
         return len(self.body) == 1 and self.body[0].is_terminal()
 
     def is_nonterminating(self):
-        return (
-            len(self.body) == 2
-            and self.body[0].is_terminal()
-            and self.body[1].is_nonterminal()
+        return (  # we treat idle rule as nonterminating
+            len(self.body) == 1
+            and self.body[0].is_nonterminal()
+            or (
+                len(self.body) == 2
+                and self.body[0].is_terminal()
+                and self.body[1].is_nonterminal()
+            )
         )
 
     def is_regular(self):
@@ -151,7 +155,7 @@ def subgrammar_table(grammar):
 
 def normal_set(grammar):
     reachable = reachable_table(grammar)
-    subgrammar = subgrammar_table(grammar)  # simplicity is over duplication
+    subgrammar = subgrammar_table(grammar)  # simplicity over duplication work
     # condition #1
     old_set, partial_set = None, {
         symbol
@@ -194,9 +198,8 @@ def regularize(grammar):
         if rule.body[0].is_nonterminal():  # and is normal
             symbol = rule.body[0].nonterminal
             rename = RuleItem.unique_nonterminal(symbol)
-            yield ProductionRule(
-                rule.guard, rule.head, (RuleItem(None, rename, rule.body[0].action),)
-            )
+            # `rule.body[0]`'s action would be lost in such rewrite manner?
+            yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=rename),))
             rename_grammar = (
                 rule.rewrite(symbol, rename) for rule in subgrammar[symbol]
             )
@@ -217,29 +220,22 @@ def regularize(grammar):
             # not assert n > 2 here, there is a silly case where rule body
             # contains two terminal symbols
             name = RuleItem.unique_nonterminal(rule.head)
-            yield ProductionRule(rule.guard, rule.head, (RuleItem(None, name, None),))
+            yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=name),))
             yield ProductionRule(None, name, rule.body[1:])
 
     subgrammar = subgrammar_table(grammar)
-    normal = normal_set(grammar)
-    while not all(
-        rule.is_regular() or len(rule.body) == 1  # allow idle rule
-        for rule in grammar
-        if rule.head in normal
-    ):
+    while not all(rule.is_regular() for rule in grammar):
         start = grammar[0].head
         # can we easily avoid yielding duplicated rules?
-        # so this `grammar` not necessary to be unordered which break property
-        grammar = set(
+        # so this `rule_set` not necessary to be unordered which break property
+        rule_set = set(
             rewrite
             for rule in grammar
-            for rewrite in rewrite_rule(rule, subgrammar, normal)
+            for rewrite in rewrite_rule(rule, subgrammar, normal_set(grammar))
         )
-        subgrammar = subgrammar_table(grammar)
-        grammar = subgrammar[start]  # eliminate dead rules
-        # (which is probably nonregular)
-        # and rebuild grammar property
-        normal = normal_set(grammar)  # how to assert all new symbols are normal?
+        subgrammar = subgrammar_table(rule_set)
+        grammar = subgrammar[start]  # eliminate dead rules (which is probably
+        # nonregular) and rebuild grammar property
     return grammar
 
 
@@ -277,16 +273,20 @@ def approx(grammar):
 
     counter = RuleItem.new_counter()
     start = first_table(grammar)[approx_symbol] - {epsilon_terminal()}
-    start_item = RuleItem(union_terminal(start), None, f"{counter} := {counter} + 1")
+    start_item = RuleItem(
+        terminal=union_terminal(start), action=f"{counter} := {counter} + 1"
+    )
     stop = first_table(
         tuple(
             ProductionRule(rule.guard, rule.head, tuple(reversed(rule.body)))
             for rule in grammar
         )
     )[approx_symbol] - {epsilon_terminal()}
-    stop_item = RuleItem(union_terminal(stop), None, f"{counter} := {counter} - 1")
-    other_item = RuleItem(complement_terminal(union_terminal(start | stop)), None, None)
-    approx_item = RuleItem(None, approx_symbol, None)
+    stop_item = RuleItem(
+        terminal=union_terminal(stop), action=f"{counter} := {counter} - 1"
+    )
+    other_item = RuleItem(terminal=complement_terminal(union_terminal(start | stop)))
+    approx_item = RuleItem(nonterminal=approx_symbol)
     return (
         ProductionRule(
             f"{counter} = 0", approx_symbol, (RuleItem(epsilon_terminal(), None, None),)
@@ -314,9 +314,11 @@ def eliminate_idle(grammar):
                     (
                         *inline_rule.body[:-1],
                         RuleItem(
-                            inline_last.terminal,
-                            inline_last.nonterminal,
-                            compose_action(inline_last.action, rule.body[0].action),
+                            terminal=inline_last.terminal,
+                            nonterminal=inline_last.nonterminal,
+                            action=compose_action(
+                                inline_last.action, rule.body[0].action
+                            ),
                         ),
                     ),
                 )
@@ -327,22 +329,25 @@ def eliminate_idle(grammar):
     return grammar
 
 
-def optimize(grammar):
+def optimize(grammar, extraction_grammar):
     subgrammar = subgrammar_table(grammar)
     normal = normal_set(grammar)
-    # TODO reports when no nonterminal can be regularized
-    # isn't that exact case for dyck?
-    return eliminate_idle(
-        subgrammar_table(
-            regularize(tuple(rule for rule in grammar if rule.head in normal))
-            + tuple(
-                rule
-                for symbol in subgrammar
-                if symbol not in normal
-                for rule in approx(subgrammar[symbol])
-            )
-        )[grammar[0].head]
+    approx_list = tuple(
+        rule
+        for symbol in subgrammar  # for nonterminal in extraction assert to be
+        # normal
+        if symbol not in normal
+        for rule in approx(subgrammar[symbol])
     )
+    grammar = (
+        extraction_grammar
+        + tuple(rule for rule in grammar if rule.head in normal)
+        + approx_list
+    )
+    # assert every nonterminal remain in `grammar` is normal, including the
+    # original ones from extraction
+    # so `grammar` can be passed into `regularize` in total
+    return eliminate_idle(regularize(grammar))
 
 
 def epsilon_terminal():
@@ -375,30 +380,30 @@ def compose_action(action, another_action):
 
 ## tests, cli and shared assets
 
-symbol_b = RuleItem(None, "B", None)
-symbol_v = RuleItem(None, "V", None)
+symbol_b = RuleItem(nonterminal="B")
+symbol_v = RuleItem(nonterminal="V")
 varstring = (
     ProductionRule(None, "S", (symbol_b, symbol_v)),
-    ProductionRule(None, "B", (RuleItem("0", None, "c := c * 2"), symbol_b)),
-    ProductionRule(None, "B", (RuleItem("1", None, "c := c * 2 + 1"), symbol_b)),
-    ProductionRule(None, "B", (RuleItem(" ", None, None),)),
-    ProductionRule("c > 0", "V", (RuleItem(".", None, "c := c - 1"), symbol_v)),
-    ProductionRule("c = 0", "V", (RuleItem(epsilon_terminal(), None, None),)),
+    ProductionRule(None, "B", (RuleItem(terminal="0", action="c := c * 2"), symbol_b)),
+    ProductionRule(
+        None, "B", (RuleItem(terminal="1", action="c := c * 2 + 1"), symbol_b)
+    ),
+    ProductionRule(None, "B", (RuleItem(terminal=" "),)),
+    ProductionRule(
+        "c > 0", "V", (RuleItem(terminal=".", action="c := c - 1"), symbol_v)
+    ),
+    ProductionRule("c = 0", "V", (RuleItem(terminal=epsilon_terminal()),)),
 )
 varstring_extraction = (
-    ProductionRule(None, "X", (symbol_b, RuleItem(None, "V", "vstr"))),
+    ProductionRule(None, "X", (symbol_b, RuleItem(nonterminal="V", action="vstr"))),
 )
 dyck = (
-    ProductionRule(None, "S", (RuleItem(epsilon_terminal(), None, None),)),
-    ProductionRule(None, "S", (RuleItem(None, "I", None), RuleItem(None, "S", None))),
+    ProductionRule(None, "S", (RuleItem(terminal=epsilon_terminal()),)),
+    ProductionRule(None, "S", (RuleItem(nonterminal="I"), RuleItem(nonterminal="S"))),
     ProductionRule(
         None,
         "I",
-        (
-            RuleItem("[", None, None),
-            RuleItem(None, "S", None),
-            RuleItem("]", None, None),
-        ),
+        (RuleItem(terminal="["), RuleItem(nonterminal="S"), RuleItem(terminal="]")),
     ),
 )
 dyck_extraction = (
@@ -406,10 +411,10 @@ dyck_extraction = (
         None,
         "X",
         (
-            RuleItem("[", None, None),
-            RuleItem(None, "S", "param"),
-            RuleItem("]", None, None),
-            RuleItem(None, "S", None),
+            RuleItem(terminal="["),
+            RuleItem(nonterminal="S", action="param"),
+            RuleItem(terminal="]"),
+            RuleItem(nonterminal="S"),
         ),
     ),
 )
@@ -471,9 +476,9 @@ class TestCRG(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    for rule in optimize(varstring):
+    for rule in optimize(varstring, varstring_extraction):
         print(rule)
     print()
-    for rule in optimize(dyck):
+    for rule in optimize(dyck, dyck_extraction):
         print(rule)
     unittest.main()
