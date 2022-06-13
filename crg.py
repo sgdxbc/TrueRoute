@@ -66,18 +66,24 @@ class RuleItem:
 
 
 class ProductionRule:
-    def __init__(self, guard, head, body):
-        assert body  # do not accept empty production rule
+    def __init__(self, guard, head, priority, body):
+        assert isinstance(head, str)
+        assert isinstance(priority, int)
+        # do not accept empty production rule
         # epsilon should be considered as a special terminal symbol since we are
         # already use regex as terminal
+        assert body and all(isinstance(item, RuleItem) for item in body)
         self.guard = guard
         self.head = head
+        self.priority = priority
         self.body = body
+
+    default_priority = 50
 
     def __str__(self):
         guard = f"({self.guard}) " if self.guard else ""
         body = " ".join(str(item) for item in self.body)
-        return f"{guard}{self.head} -> {body}"
+        return f"{guard}{self.head} {self.priority} -> {body}"
 
     def __hash__(self):
         return hash((self.guard, self.head, self.body))
@@ -127,6 +133,7 @@ class ProductionRule:
         return ProductionRule(
             self.guard,
             target if self.head == source else self.head,
+            self.priority,
             tuple(item.rewrite(source, target) for item in self.body),
         )
 
@@ -222,7 +229,9 @@ def regularize(grammar):
                 return
 
             rename = RuleItem.new_nonterminal(symbol)
-            yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=rename),))
+            yield ProductionRule(
+                rule.guard, rule.head, rule.priority, (RuleItem(nonterminal=rename),)
+            )
 
             rename_grammar = tuple(
                 rule.rewrite(symbol, rename) for rule in subgrammar[symbol]
@@ -237,31 +246,29 @@ def regularize(grammar):
                 )
 
             for rename_rule in rename_grammar:
+                if rename_rule.is_nonterminating():
+                    yield rename_rule
                 # according to paper's procedure any action following "Y1" (i.e.
-                # `rule.body[0]`) would be discard. to avoid, we modified the
+                # `rule.body[0]`) would be discard. to avoid it, we modified the
                 # procedure here, to compose Y1's action into terminating rule's
-                # terminal's action, then append Y2Y3... to the rule
-                if rename_rule.is_terminating():
+                # terminal's action, only then append Y2Y3... to the rule
+                else:
                     assert len(rename_rule.body) == 1
+                    assert rename_rule.body[0].is_terminal()
                     yield ProductionRule(
                         rename_rule.guard,
                         rename_rule.head,
+                        rename_rule.priority,
                         (
                             RuleItem(
                                 terminal=rename_rule.body[0].terminal,
                                 action=compose_action(
-                                    rename_rule.body[-1].action, action
+                                    rename_rule.body[0].action, action
                                 ),
                             ),
                             *rule.body[1:],
                         ),
                     )
-                else:
-                    # here the paper describes as "for each nonterminaing..."
-                    # which possibly imply the rule should be regular
-                    # however the case above also produce nonregular rules so
-                    # i don't think this is required to be regular either
-                    yield rename_rule
         else:  # rule.body[0] is terminal
             # not assert n > 2 here, there is a silly case where rule body
             # contains two terminal symbols
@@ -269,12 +276,13 @@ def regularize(grammar):
             yield ProductionRule(
                 rule.guard,
                 rule.head,
+                rule.priority,
                 (
                     rule.body[0],
                     RuleItem(nonterminal=name),
                 ),
             )
-            yield ProductionRule(None, name, rule.body[1:])
+            yield ProductionRule(None, name, rule.priority, rule.body[1:])
 
     subgrammar = subgrammar_table(grammar)
     while not all(rule.is_triple() for rule in grammar):
@@ -321,28 +329,43 @@ def first_table(grammar):  # precisely, `first_set_table`
 
 def approx(grammar):
     approx_symbol = grammar[0].head
-
-    counter = RuleItem.new_counter()
     start = first_table(grammar)[approx_symbol] - {Regular.epsilon}
-    start_item = RuleItem(
-        terminal=Regular.new_union(start), action=f"{counter} := {counter} + 1"
-    )
     stop = first_table(
         tuple(
-            ProductionRule(rule.guard, rule.head, tuple(reversed(rule.body)))
+            ProductionRule(
+                rule.guard, rule.head, rule.priority, tuple(reversed(rule.body))
+            )
             for rule in grammar
         )
     )[approx_symbol] - {Regular.epsilon}
+
+    counter = RuleItem.new_counter()
+    start_item = RuleItem(
+        terminal=Regular.new_union(start), action=f"{counter} := {counter} + 1"
+    )
     stop_item = RuleItem(
         terminal=Regular.new_union(stop), action=f"{counter} := {counter} - 1"
     )
     approx_item = RuleItem(nonterminal=approx_symbol)
     return (
         ProductionRule(
-            f"{counter} = 0", approx_symbol, (RuleItem(terminal=Regular.epsilon),)
+            f"{counter} = 0",
+            approx_symbol,
+            ProductionRule.default_priority,
+            (RuleItem(terminal=Regular.epsilon),),
         ),
-        ProductionRule(f"{counter} >= 0", approx_symbol, (start_item, approx_item)),
-        ProductionRule(f"{counter} > 0", approx_symbol, (stop_item, approx_item)),
+        ProductionRule(
+            f"{counter} >= 0",
+            approx_symbol,
+            ProductionRule.default_priority,
+            (start_item, approx_item),
+        ),
+        ProductionRule(
+            f"{counter} > 0",
+            approx_symbol,
+            ProductionRule.default_priority,
+            (stop_item, approx_item),
+        ),
         ProductionRule(
             f"{counter} > 0",
             approx_symbol,
@@ -354,7 +377,7 @@ def approx(grammar):
             # byte, using wildcard accompanied by low priority should be
             # effectively equivalent, while still support `start` and `stop` to
             # contain complex regular. so why not
-            # TODO add priority
+            ProductionRule.default_priority // 2,
             (RuleItem(terminal=Regular.wildcard), approx_item),
         ),
     )
@@ -375,6 +398,7 @@ def eliminate_idle(grammar):
                 yield ProductionRule(
                     merge_predicate(rule.guard, inline_rule.guard),
                     rule.head,
+                    (rule.priority + inline_rule.priority) // 2,
                     (
                         *inline_rule.body[:-1],
                         RuleItem(
@@ -395,8 +419,8 @@ def eliminate_idle(grammar):
 
 def optimize(grammar, extraction_grammar):
     grammar = subgrammar_table(extraction_grammar + grammar)[grammar[0].head]
-    subgrammar = subgrammar_table(grammar)
     normal = normal_set(grammar)
+    subgrammar = subgrammar_table(grammar)
     approx_list = tuple(
         rule
         for symbol in subgrammar  # for nonterminal in extraction assert to be
@@ -412,7 +436,21 @@ def optimize(grammar, extraction_grammar):
     # assert every nonterminal remain in `grammar` is normal, including the
     # original ones from extraction
     # so `grammar` can be passed into `regularize` entirely
-    return eliminate_idle(regularize(grammar))
+    for rule in eliminate_idle(regularize(grammar)):
+        assert rule.body[0].is_terminal()
+        if rule.is_terminating():
+            nonterminal = None
+        else:
+            assert rule.body[1].is_nonterminal()
+            nonterminal = rule.body[1].nonterminal
+        yield (
+            rule.guard,
+            rule.head,
+            rule.priority,
+            rule.body[0].terminal,
+            rule.body[0].action,
+            nonterminal,
+        )
 
 
 class Regular:
@@ -568,37 +606,66 @@ def compose_action(action, another_action):
 symbol_b = RuleItem(nonterminal="B")
 symbol_v = RuleItem(nonterminal="V")
 varstring = (
-    ProductionRule(None, "S", (symbol_b, symbol_v)),
+    ProductionRule(None, "S", ProductionRule.default_priority, (symbol_b, symbol_v)),
     ProductionRule(
         None,
         "B",
+        ProductionRule.default_priority,
         (RuleItem(terminal=Regular.new_literal(b"0"), action="c := c * 2"), symbol_b),
     ),
     ProductionRule(
         None,
         "B",
+        ProductionRule.default_priority,
         (
             RuleItem(terminal=Regular.new_literal(b"1"), action="c := c * 2 + 1"),
             symbol_b,
         ),
     ),
-    ProductionRule(None, "B", (RuleItem(terminal=Regular.new_literal(b" ")),)),
+    ProductionRule(
+        None,
+        "B",
+        ProductionRule.default_priority,
+        (RuleItem(terminal=Regular.new_literal(b" ")),),
+    ),
     ProductionRule(
         "c > 0",
         "V",
+        ProductionRule.default_priority,
         (RuleItem(terminal=Regular.wildcard, action="c := c - 1"), symbol_v),
     ),
-    ProductionRule("c = 0", "V", (RuleItem(terminal=Regular.epsilon),)),
+    ProductionRule(
+        "c = 0",
+        "V",
+        ProductionRule.default_priority,
+        (RuleItem(terminal=Regular.epsilon),),
+    ),
 )
 varstring_extraction = (
-    ProductionRule(None, "X", (symbol_b, RuleItem(nonterminal="V", action="vstr"))),
+    ProductionRule(
+        None,
+        "X",
+        ProductionRule.default_priority,
+        (symbol_b, RuleItem(nonterminal="V", action="vstr")),
+    ),
 )
 dyck = (
-    ProductionRule(None, "S", (RuleItem(terminal=Regular.epsilon),)),
-    ProductionRule(None, "S", (RuleItem(nonterminal="I"), RuleItem(nonterminal="S"))),
+    ProductionRule(
+        None,
+        "S",
+        ProductionRule.default_priority,
+        (RuleItem(terminal=Regular.epsilon),),
+    ),
+    ProductionRule(
+        None,
+        "S",
+        ProductionRule.default_priority,
+        (RuleItem(nonterminal="I"), RuleItem(nonterminal="S")),
+    ),
     ProductionRule(
         None,
         "I",
+        ProductionRule.default_priority,
         (
             RuleItem(terminal=Regular.new_literal(b"[")),
             RuleItem(nonterminal="S"),
@@ -610,6 +677,7 @@ dyck_extraction = (
     ProductionRule(
         None,
         "X",
+        ProductionRule.default_priority,
         (
             RuleItem(terminal=Regular.new_literal(b"[")),
             RuleItem(nonterminal="S", action="param"),
@@ -661,21 +729,50 @@ class TestCRG(unittest.TestCase):
 
     def test_first(self):
         self.assertEqual(first_table(()), {})
-        # self.assertEqual(
-        #     first_table(varstring),
-        #     {
-        #         "S": {"0", "1", " "},
-        #         "B": {"0", "1", " "},
-        #         "V": {Regular.wildcard, Regular.epsilon},
-        #     },
-        # )
-        # self.assertEqual(first_table(dyck), {"S": {"[", Regular.epsilon}, "I": {"["}})
+        self.assertEqual(
+            first_table(varstring),
+            {
+                "S": {
+                    Regular.new_literal(b"0"),
+                    Regular.new_literal(b"1"),
+                    Regular.new_literal(b" "),
+                },
+                "B": {
+                    Regular.new_literal(b"0"),
+                    Regular.new_literal(b"1"),
+                    Regular.new_literal(b" "),
+                },
+                "V": {Regular.wildcard, Regular.epsilon},
+            },
+        )
+        self.assertEqual(
+            first_table(dyck),
+            {
+                "S": {Regular.new_literal(b"["), Regular.epsilon},
+                "I": {Regular.new_literal(b"[")},
+            },
+        )
 
 
 if __name__ == "__main__":
-    for rule in optimize(varstring, varstring_extraction):
-        print(rule)
+    print(
+        "{:20}{:14}{:4}{:20}{:20}{}".format(
+            "Guard", "Source", "Pri", "Regular", "Action", "Target"
+        )
+    )
+    for guard, source, priority, regular, action, target in optimize(
+        varstring, varstring_extraction
+    ):
+        guard = str(guard) if guard else ""
+        action = str(action) if action else ""
+        target = target or "(accept)"
+        print(f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}")
     print()
-    for rule in optimize(dyck, dyck_extraction):
-        print(rule)
+    for guard, source, priority, regular, action, target in optimize(
+        dyck, dyck_extraction
+    ):
+        guard = str(guard) if guard else ""
+        action = str(action) if action else ""
+        target = target or "(accept)"
+        print(f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}")
     print()
