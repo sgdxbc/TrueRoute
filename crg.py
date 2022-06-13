@@ -6,6 +6,8 @@ crg.py: Counting Regular Grammars implementation
 class RuleItem:
     def __init__(self, terminal=None, nonterminal=None, action=None):
         assert (terminal is None) != (nonterminal is None)
+        assert terminal is None or isinstance(terminal, Regular)
+        assert nonterminal is None or isinstance(nonterminal, str)
         self.terminal = terminal
         self.nonterminal = nonterminal
         self.action = action
@@ -35,11 +37,9 @@ class RuleItem:
         return counter
 
     def __str__(self):
-        action = ""
-        if self.action:
-            action = f" ({self.action})"
+        action = f" ({self.action})" if self.action else ""
         if self.is_terminal():
-            return f"{self.terminal}{action}"
+            return f"/{self.terminal}/{action}"
         else:
             return f"{self.nonterminal}{action}"
 
@@ -75,9 +75,7 @@ class ProductionRule:
         self.body = body
 
     def __str__(self):
-        guard = ""
-        if self.guard:
-            guard = f"({self.guard}) "
+        guard = f"({self.guard}) " if self.guard else ""
         body = " ".join(str(item) for item in self.body)
         return f"{guard}{self.head} -> {body}"
 
@@ -98,11 +96,9 @@ class ProductionRule:
         return (  # we treat idle rule as nonterminating
             len(self.body) == 1
             and self.body[0].is_nonterminal()
-            or (
-                len(self.body) == 2
-                and self.body[0].is_terminal()
-                and self.body[1].is_nonterminal()
-            )
+            or len(self.body) == 2
+            and self.body[0].is_terminal()
+            and self.body[1].is_nonterminal()
         )
 
     def is_regular(self):
@@ -167,8 +163,8 @@ def normal_set(grammar):
     # condition #2 and can only reach nonterminal in partial normal set
     # `partial_set`
     def condition2(symbol, partial_set):
-        return all(
-            not item.is_nonterminal() or item.nonterminal != symbol
+        return not any(
+            item.is_nonterminal() and item.nonterminal == symbol
             for rule in grammar
             if rule.head == symbol
             for item in rule.body[:-1]
@@ -225,7 +221,6 @@ def regularize(grammar):
 
     subgrammar = subgrammar_table(grammar)
     while not all(rule.is_regular() for rule in grammar):
-        start = grammar[0].head
         # can we easily avoid yielding duplicated rules?
         # so this `rule_set` not necessary to be unordered which break property
         rule_set = set(
@@ -234,13 +229,12 @@ def regularize(grammar):
             for rewrite in rewrite_rule(rule, subgrammar, normal_set(grammar))
         )
         subgrammar = subgrammar_table(rule_set)
-        grammar = subgrammar[start]  # eliminate dead rules (which is probably
-        # nonregular) and rebuild grammar property
+        grammar = subgrammar[grammar[0].head]  # eliminate dead rules (which is
+        # probably nonregular) and rebuild grammar property
     return grammar
 
 
-# precisely, `first_set_table`
-def first_table(grammar):
+def first_table(grammar):  # precisely, `first_set_table`
     old_first, first = None, {
         symbol: set() for symbol in set(rule.head for rule in grammar)
     }
@@ -250,10 +244,10 @@ def first_table(grammar):
         for item in rule.body:
             if item.is_terminal():
                 return rule_set | {item.terminal}
-            if epsilon_terminal() not in partial_first[item.nonterminal]:
+            if Regular.epsilon not in partial_first[item.nonterminal]:
                 return rule_set | partial_first[item.nonterminal]
-            rule_set |= partial_first[item.nonterminal] - {epsilon_terminal()}
-        return rule_set | {epsilon_terminal()}
+            rule_set |= partial_first[item.nonterminal] - {Regular.epsilon}
+        return rule_set | {Regular.epsilon}
 
     while old_first != first:
         old_first, first = first, {
@@ -272,28 +266,40 @@ def approx(grammar):
     approx_symbol = grammar[0].head
 
     counter = RuleItem.new_counter()
-    start = first_table(grammar)[approx_symbol] - {epsilon_terminal()}
+    start = first_table(grammar)[approx_symbol] - {Regular.epsilon}
     start_item = RuleItem(
-        terminal=union_terminal(start), action=f"{counter} := {counter} + 1"
+        terminal=Regular.new_union(start), action=f"{counter} := {counter} + 1"
     )
     stop = first_table(
         tuple(
             ProductionRule(rule.guard, rule.head, tuple(reversed(rule.body)))
             for rule in grammar
         )
-    )[approx_symbol] - {epsilon_terminal()}
+    )[approx_symbol] - {Regular.epsilon}
     stop_item = RuleItem(
-        terminal=union_terminal(stop), action=f"{counter} := {counter} - 1"
+        terminal=Regular.new_union(stop), action=f"{counter} := {counter} - 1"
     )
-    other_item = RuleItem(terminal=complement_terminal(union_terminal(start | stop)))
     approx_item = RuleItem(nonterminal=approx_symbol)
     return (
         ProductionRule(
-            f"{counter} = 0", approx_symbol, (RuleItem(epsilon_terminal(), None, None),)
+            f"{counter} = 0", approx_symbol, (RuleItem(terminal=Regular.epsilon),)
         ),
         ProductionRule(f"{counter} >= 0", approx_symbol, (start_item, approx_item)),
         ProductionRule(f"{counter} > 0", approx_symbol, (stop_item, approx_item)),
-        ProductionRule(f"{counter} > 0", approx_symbol, (other_item, approx_item)),
+        ProductionRule(
+            f"{counter} > 0",
+            approx_symbol,
+            # according to paper we should use a disjoin "other" terminal
+            # instead of a wildcard, however it is impossible to create a
+            # complement regular of arbitrary regular set. `Regular.new_exclude`
+            # only works on single byte (i.e. `exact`) set
+            # although in paper and dyck we actually only need to exclude exact
+            # byte, using wildcard accompanied by low priority should be
+            # effectively equivalent, while still support `start` and `stop` to
+            # contain complex regular. so why not
+            # TODO add priority
+            (RuleItem(terminal=Regular.wildcard), approx_item),
+        ),
     )
 
 
@@ -301,6 +307,7 @@ def eliminate_idle(grammar):
     def iteration(grammar):
         subgrammar = subgrammar_table(grammar)
         for rule in grammar:
+            assert rule.is_regular()
             if rule.body[0].is_terminal():
                 yield rule
                 continue
@@ -346,20 +353,135 @@ def optimize(grammar, extraction_grammar):
     )
     # assert every nonterminal remain in `grammar` is normal, including the
     # original ones from extraction
-    # so `grammar` can be passed into `regularize` in total
+    # so `grammar` can be passed into `regularize` entirely
     return eliminate_idle(regularize(grammar))
 
 
-def epsilon_terminal():
-    return "(epsilon)"  # TODO
+class Regular:
+    def __init__(self, exact=None, concat=None, union=None, star=None, repr_str=None):
+        assert (
+            len(tuple(arg for arg in (exact, concat, union, star) if arg is not None))
+            == 1
+        )
+        assert (
+            exact is None
+            or isinstance(exact, set)
+            and exact
+            and all(isinstance(byte, int) and 0 <= byte < 256 for byte in exact)
+        )
+        assert concat is None or all(isinstance(part, Regular) for part in concat)
+        assert (
+            union is None
+            or isinstance(union, set)
+            and union
+            and all(isinstance(variant, Regular) for variant in union)
+        )
+        assert star is None or isinstance(star, Regular)
+        self.exact = exact
+        self.concat = concat
+        self.union = union
+        self.star = star
+        self.repr_str = repr_str
+
+    @staticmethod
+    def new_literal(byte_seq):
+        assert isinstance(byte_seq, bytes)
+        assert byte_seq  # do not accept empty literal, use Regular.epsilon
+        if len(byte_seq) == 1:
+            return Regular(exact={byte_seq[0]})
+        return Regular(concat=tuple(Regular(exact={byte}) for byte in byte_seq))
+
+    @staticmethod
+    def new_exclude(opposite):
+        assert isinstance(opposite, Regular)
+        assert opposite.is_exact()
+        return Regular(
+            exact=Regular.wildcard.exact - opposite.exact,
+            repr_str="[^{opposite.exact_repr}]",
+        )
+
+    @staticmethod
+    def new_union(variant_set):
+        assert variant_set
+        if len(variant_set) == 1:
+            return tuple(variant_set)[0]
+
+        union_varaint = set(
+            inner_variant
+            for variant in variant_set
+            if variant.is_union()
+            for inner_variant in variant.union
+        )
+        exact_variant = (
+            {
+                Regular(
+                    exact=set(
+                        byte
+                        for variant in variant_set
+                        if variant.is_exact()
+                        for byte in variant.exact
+                    )
+                )
+            }
+            if any(variant.is_exact() for variant in variant_set)
+            else set()
+        )
+        other_variant = set(
+            variant
+            for variant in variant_set
+            if not variant.is_union() and not variant.is_exact()
+        )
+        return Regular(union=union_varaint | exact_variant | other_variant)
+        # assert at least one of above is not empty
+        # (will be asserted in __init__)
+
+    def __str__(self):
+        if self.repr_str:
+            return self.repr_str
+        if self.is_exact():
+            if len(self.exact) == 1:
+                return chr(tuple(self.exact)[0])
+            exact = "".join(chr(byte) for byte in self.exact)
+            return f"[{exact}]"
+        if self.is_concat():
+            # this is going to be looking sooooo bad for byte string literal
+            return "".join(f"({part})" for part in self.concat)
+        if self.is_union():
+            return "|".join(f"({variant})" for variant in self.union)
+        if self.is_star():
+            return f"({self.star})*"
+        # unreachable
+
+    def __hash__(self):
+        exact = self.exact and frozenset(self.exact)
+        union = self.union and frozenset(self.union)
+        return hash((exact, self.concat, union, self.star))
+
+    def __eq__(self, other):
+        return isinstance(other, Regular) and (
+            self.exact,
+            self.concat,
+            self.union,
+            self.star,
+        ) == (other.exact, other.concat, other.union, other.star)
+
+    def is_exact(self):
+        return self.exact is not None
+
+    def is_union(self):
+        return self.union is not None
+
+    def is_concat(self):
+        return self.concat is not None
+
+    def is_star(self):
+        return self.star is not None
 
 
-def union_terminal(terminal_set):
-    return f"any of {set(terminal_set)}"  # TODO
-
-
-def complement_terminal(terminal):
-    return f"any except {terminal}"  # TODO
+# borrow concat corner case for epsilon
+# consider make a dedicate argument if not work any more
+Regular.epsilon = Regular(concat=(), repr_str="(eps)")
+Regular.wildcard = Regular(exact=set(range(256)), repr_str=".")
 
 
 def merge_predicate(guard, another_guard):
@@ -384,26 +506,41 @@ symbol_b = RuleItem(nonterminal="B")
 symbol_v = RuleItem(nonterminal="V")
 varstring = (
     ProductionRule(None, "S", (symbol_b, symbol_v)),
-    ProductionRule(None, "B", (RuleItem(terminal="0", action="c := c * 2"), symbol_b)),
     ProductionRule(
-        None, "B", (RuleItem(terminal="1", action="c := c * 2 + 1"), symbol_b)
+        None,
+        "B",
+        (RuleItem(terminal=Regular.new_literal(b"0"), action="c := c * 2"), symbol_b),
     ),
-    ProductionRule(None, "B", (RuleItem(terminal=" "),)),
     ProductionRule(
-        "c > 0", "V", (RuleItem(terminal=".", action="c := c - 1"), symbol_v)
+        None,
+        "B",
+        (
+            RuleItem(terminal=Regular.new_literal(b"1"), action="c := c * 2 + 1"),
+            symbol_b,
+        ),
     ),
-    ProductionRule("c = 0", "V", (RuleItem(terminal=epsilon_terminal()),)),
+    ProductionRule(None, "B", (RuleItem(terminal=Regular.new_literal(b" ")),)),
+    ProductionRule(
+        "c > 0",
+        "V",
+        (RuleItem(terminal=Regular.wildcard, action="c := c - 1"), symbol_v),
+    ),
+    ProductionRule("c = 0", "V", (RuleItem(terminal=Regular.epsilon),)),
 )
 varstring_extraction = (
     ProductionRule(None, "X", (symbol_b, RuleItem(nonterminal="V", action="vstr"))),
 )
 dyck = (
-    ProductionRule(None, "S", (RuleItem(terminal=epsilon_terminal()),)),
+    ProductionRule(None, "S", (RuleItem(terminal=Regular.epsilon),)),
     ProductionRule(None, "S", (RuleItem(nonterminal="I"), RuleItem(nonterminal="S"))),
     ProductionRule(
         None,
         "I",
-        (RuleItem(terminal="["), RuleItem(nonterminal="S"), RuleItem(terminal="]")),
+        (
+            RuleItem(terminal=Regular.new_literal(b"[")),
+            RuleItem(nonterminal="S"),
+            RuleItem(terminal=Regular.new_literal(b"]")),
+        ),
     ),
 )
 dyck_extraction = (
@@ -411,9 +548,9 @@ dyck_extraction = (
         None,
         "X",
         (
-            RuleItem(terminal="["),
+            RuleItem(terminal=Regular.new_literal(b"[")),
             RuleItem(nonterminal="S", action="param"),
-            RuleItem(terminal="]"),
+            RuleItem(terminal=Regular.new_literal(b"]")),
             RuleItem(nonterminal="S"),
         ),
     ),
@@ -461,18 +598,15 @@ class TestCRG(unittest.TestCase):
 
     def test_first(self):
         self.assertEqual(first_table(()), {})
-        self.assertEqual(
-            first_table(varstring),
-            {
-                "S": {"0", "1", " "},
-                "B": {"0", "1", " "},
-                "V": {".", epsilon_terminal()},
-            },
-        )
-        self.assertEqual(
-            first_table(dyck),
-            {"S": {"[", epsilon_terminal()}, "I": {"["}},
-        )
+        # self.assertEqual(
+        #     first_table(varstring),
+        #     {
+        #         "S": {"0", "1", " "},
+        #         "B": {"0", "1", " "},
+        #         "V": {Regular.wildcard, Regular.epsilon},
+        #     },
+        # )
+        # self.assertEqual(first_table(dyck), {"S": {"[", Regular.epsilon}, "I": {"["}})
 
 
 if __name__ == "__main__":
@@ -481,4 +615,3 @@ if __name__ == "__main__":
     print()
     for rule in optimize(dyck, dyck_extraction):
         print(rule)
-    unittest.main()
