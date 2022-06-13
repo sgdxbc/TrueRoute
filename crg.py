@@ -67,6 +67,16 @@ class RuleItem:
 
 class ProductionRule:
     def __init__(self, guard, head, priority, body):
+        assert (
+            guard is None
+            or isinstance(guard, dict)
+            and all(
+                isinstance(variable, str)
+                and (low is None or isinstance(low, int))
+                and (high is None or isinstance(high, int))
+                for variable, (low, high) in guard.items()
+            )
+        )
         assert isinstance(head, str)
         assert isinstance(priority, int)
         # do not accept empty production rule
@@ -86,7 +96,8 @@ class ProductionRule:
         return f"{guard}{self.head} {self.priority} -> {body}"
 
     def __hash__(self):
-        return hash((self.guard, self.head, self.body))
+        guard = self.guard and frozenset(self.guard.items())
+        return hash((guard, self.head, tuple(self.body)))
 
     def __eq__(self, other):
         return isinstance(other, ProductionRule) and (
@@ -349,25 +360,25 @@ def approx(grammar):
     approx_item = RuleItem(nonterminal=approx_symbol)
     return (
         ProductionRule(
-            f"{counter} = 0",
+            {counter: (0, 1)},
             approx_symbol,
             ProductionRule.default_priority,
             (RuleItem(terminal=Regular.epsilon),),
         ),
         ProductionRule(
-            f"{counter} >= 0",
+            {counter: (0, None)},
             approx_symbol,
             ProductionRule.default_priority,
             (start_item, approx_item),
         ),
         ProductionRule(
-            f"{counter} > 0",
+            {counter: (1, None)},
             approx_symbol,
             ProductionRule.default_priority,
             (stop_item, approx_item),
         ),
         ProductionRule(
-            f"{counter} > 0",
+            {counter: (1, None)},
             approx_symbol,
             # according to paper we should use a disjoin "other" terminal
             # instead of a wildcard, however it is impossible to create a
@@ -451,6 +462,79 @@ def optimize(grammar, extraction_grammar):
             rule.body[0].action,
             nonterminal,
         )
+
+
+def split_guard(transition_list):
+    assert len(set(source for _, source, *_ in transition_list)) <= 1
+    marker_table = {}
+    for guard, *_ in transition_list:
+        if not guard:
+            continue
+        marker_table = {
+            variable: marker_table.get(variable, set())
+            | set(marker for marker in guard.get(variable, ()) if marker is not None)
+            for variable in marker_table.keys() | guard.keys()
+        }
+    marker_table = {
+        variable: sorted(marker_set) for variable, marker_set in marker_table.items()
+    }
+
+    def split_bound(marker_list, bound):
+        low, high = bound
+        level = low
+        for marker in marker_list:
+            # marker in [level, high)
+            if (level is None or level < marker) and (high is None or marker <= high):
+                yield level, marker
+                level = marker
+        assert high is None or level == high
+        if high is None:
+            yield level, high
+
+    def split(guard):
+        if guard is None:
+            yield None
+            return
+
+        def yield_one(item_list):
+            if not item_list:
+                yield {}
+                return
+            (variable, bound_list), *item_list = item_list
+            for bound in bound_list:
+                for rest in yield_one(item_list):
+                    yield {variable: bound, **rest}
+
+        yield from yield_one(
+            tuple(
+                (variable, tuple(split_bound(marker_table[variable], bound)))
+                for variable, bound in guard.items()
+            )
+        )
+
+    for guard, _, *rest in transition_list:
+        yield set(
+            splitted and frozenset(splitted.items()) for splitted in split(guard)
+        ), rest
+
+
+def parse(grammar, extraction_grammar):
+    transition_list = tuple(optimize(grammar, extraction_grammar))
+    for source in dict.fromkeys(source for _, source, *_ in transition_list):
+        split_list = tuple(
+            split_guard(
+                tuple(
+                    transition
+                    for transition in transition_list
+                    if transition[1] == source
+                )
+            )
+        )
+        guard_set = set(guard for split_set, _ in split_list for guard in split_set)
+        yield source, {
+            guard: tuple(rest for split_set, rest in split_list if guard in split_set)
+            for guard in guard_set
+        }
 
 
 class Regular:
@@ -590,7 +674,22 @@ def merge_predicate(guard, another_guard):
         return another_guard
     if not another_guard:
         return guard
-    return f"{guard} and {another_guard}"  # TODO
+
+    def merge_bound(bound, another_bound):
+        low, high = bound
+        another_low, another_high = another_bound
+        if another_low is not None:
+            low = max(low, another_low) if low is not None else another_low
+        if another_high is not None:
+            high = min(high, another_high) if high is not None else another_high
+        return low, high
+
+    return {
+        variable: merge_bound(
+            guard.get(variable, (None, None)), another_guard.get(variable, (None, None))
+        )
+        for variable in guard.keys() | another_guard.keys()
+    }
 
 
 def compose_action(action, another_action):
@@ -629,13 +728,13 @@ varstring = (
         (RuleItem(terminal=Regular.new_literal(b" ")),),
     ),
     ProductionRule(
-        "c > 0",
+        {"c": (1, None)},
         "V",
         ProductionRule.default_priority,
         (RuleItem(terminal=Regular.wildcard, action="c := c - 1"), symbol_v),
     ),
     ProductionRule(
-        "c = 0",
+        {"c": (0, 1)},
         "V",
         ProductionRule.default_priority,
         (RuleItem(terminal=Regular.epsilon),),
@@ -754,25 +853,41 @@ class TestCRG(unittest.TestCase):
         )
 
 
+def guard_str(guard):
+    def bound_str(bound):
+        low, high = bound
+        low = str(low) if low is not None else ""
+        high = str(high) if high is not None else ""
+        return f"{low}..{high}"
+
+    return " & ".join(f"{variable} in {bound_str(bound)}" for variable, bound in guard)
+
+
 if __name__ == "__main__":
     print(
         "{:20}{:14}{:4}{:20}{:20}{}".format(
             "Guard", "Source", "Pri", "Regular", "Action", "Target"
         )
     )
-    for guard, source, priority, regular, action, target in optimize(
-        varstring, varstring_extraction
-    ):
-        guard = str(guard) if guard else ""
-        action = str(action) if action else ""
-        target = target or "(accept)"
-        print(f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}")
+
+    for source, guard_table in parse(varstring, varstring_extraction):
+        for guard, transition_list in guard_table.items():
+            guard = guard_str(guard) if guard else ""
+            for priority, regular, action, target in transition_list:
+                action = str(action) if action else ""
+                target = target or "(accept)"
+                print(
+                    f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
+                )
     print()
-    for guard, source, priority, regular, action, target in optimize(
-        dyck, dyck_extraction
-    ):
-        guard = str(guard) if guard else ""
-        action = str(action) if action else ""
-        target = target or "(accept)"
-        print(f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}")
+
+    for source, guard_table in parse(dyck, dyck_extraction):
+        for guard, transition_list in guard_table.items():
+            guard = guard_str(guard) if guard else ""
+            for priority, regular, action, target in transition_list:
+                action = str(action) if action else ""
+                target = target or "(accept)"
+                print(
+                    f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
+                )
     print()
