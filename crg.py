@@ -17,7 +17,7 @@ class RuleItem:
     # this method operates on nonterminator names, not RuleItem objects
     # we allow nonterminator with same name assoicates to difference actions
     @classmethod
-    def unique_nonterminal(cls, name_hint):
+    def new_nonterminal(cls, name_hint):
         id = 0
         [name_hint, *postfix] = name_hint.rsplit("_", maxsplit=1)
         if postfix:
@@ -93,16 +93,35 @@ class ProductionRule:
         return len(self.body) == 1 and self.body[0].is_terminal()
 
     def is_nonterminating(self):
-        return (  # we treat idle rule as nonterminating
-            len(self.body) == 1
-            and self.body[0].is_nonterminal()
-            or len(self.body) == 2
+        return (
+            len(self.body) == 2
             and self.body[0].is_terminal()
             and self.body[1].is_nonterminal()
+            and self.body[1].action is None
         )
 
-    def is_regular(self):
-        return self.is_terminating() or self.is_nonterminating()
+    def is_idle(self):
+        return (
+            len(self.body) == 1
+            and self.body[0].is_nonterminal()
+            # in section IV.E the paper presents an idle rule with trailing
+            # action following nonterminal. however the procedures in paper is
+            # not sufficient to convert such idle rule into CRG triple form.
+            # hence we exclude trailing action from idle rule, force such form
+            # to be regularized
+            and self.body[0].action is None
+        )
+
+    # here is mostly what paper called "regular" in section IV.A. because this
+    # causes awful double meaning of "regular", i.e. regular rule and `Regular`
+    # which is used as terminal symbol and others, the predicate is renamed to
+    # `is_triple`, indicate that the rule is in the form of (terminal, action,
+    # nonterminal/next state) triple (where some of the component may be
+    # missing).
+    # another difference is that `is_triple` includes (tolerances) idle rule
+    # which is not included by paper's regular form
+    def is_triple(self):
+        return self.is_terminating() or self.is_nonterminating() or self.is_idle()
 
     def rewrite(self, source, target):
         return ProductionRule(
@@ -156,7 +175,7 @@ def normal_set(grammar):
     old_set, partial_set = None, {
         symbol
         for symbol in subgrammar
-        if all(rule.is_regular() for rule in subgrammar[symbol])
+        if all(rule.is_triple() for rule in subgrammar[symbol])
     }
 
     # iteration helper, return True for `symbol` which is normal under
@@ -186,25 +205,53 @@ def normal_set(grammar):
 def regularize(grammar):
     def rewrite_rule(rule, subgrammar, normal):
         assert rule.head in normal
-        if rule.is_regular():
+        if rule.is_triple():
             yield rule
             return
         if rule.body[0].is_nonterminal() and rule.body[0].nonterminal not in normal:
             raise Exception(f"incorrect rule: {rule}")
         if rule.body[0].is_nonterminal():  # and is normal
             symbol = rule.body[0].nonterminal
-            rename = RuleItem.unique_nonterminal(symbol)
-            # `rule.body[0]`'s action would be lost in such rewrite manner?
+            action = rule.body[0].action
+            rename = RuleItem.new_nonterminal(symbol)
             yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=rename),))
             rename_grammar = (
                 rule.rewrite(symbol, rename) for rule in subgrammar[symbol]
             )
             for rename_rule in rename_grammar:
-                if rename_rule.is_terminating():
+                # CUSTOMIZE: here we have a major divergance compare to paper.
+                #
+                # in section IV.C, when Y1 (i.e. `rule.body[0]`) is normal
+                # nonterminal, the paper discuss two cases where rules from
+                # subgrammar[Y1] is terminating or nonterminating. This implies
+                # all rules in subgrammar[Y1] is regular, i.e. in triple form.
+                # That is not the case in this implementation, and the paper
+                # does not clearly show that how that would become the case.
+                #
+                # additionally, according to paper's procedure any action
+                # following Y1 would be discard. Due to these reasons the
+                # procedure is modified as this:
+                #
+                # for rule in subgrammar[Y1] (i.e. `rename_rule`), if the rule
+                # is ending with a terminal (effectively "terminating" the
+                # parsing of Y1, but not necessary to be a terminating regular
+                # rule as the paper defined), compose Y1's action into that
+                # terminal, then append Y2Y3... to the rule. otherwise, Y1 is
+                # not complete parsing yet and the rule is yield unchanged
+                if rename_rule.body[-1].is_terminal():
                     yield ProductionRule(
                         rename_rule.guard,
                         rename_rule.head,
-                        rename_rule.body + rule.body[1:],
+                        rename_rule.body[:-1]
+                        + (
+                            RuleItem(
+                                terminal=rename_rule.body[-1].terminal,
+                                action=compose_action(
+                                    rename_rule.body[-1].action, action
+                                ),
+                            ),
+                        )
+                        + rule.body[1:],
                     )
                 else:
                     # here the paper describes as "for each nonterminaing..."
@@ -215,12 +262,19 @@ def regularize(grammar):
         else:
             # not assert n > 2 here, there is a silly case where rule body
             # contains two terminal symbols
-            name = RuleItem.unique_nonterminal(rule.head)
-            yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=name),))
+            name = RuleItem.new_nonterminal(rule.head)
+            yield ProductionRule(
+                rule.guard,
+                rule.head,
+                (
+                    rule.body[0],
+                    RuleItem(nonterminal=name),
+                ),
+            )
             yield ProductionRule(None, name, rule.body[1:])
 
     subgrammar = subgrammar_table(grammar)
-    while not all(rule.is_regular() for rule in grammar):
+    while not all(rule.is_triple() for rule in grammar):
         # can we easily avoid yielding duplicated rules?
         # so this `rule_set` not necessary to be unordered which break property
         rule_set = set(
@@ -230,7 +284,7 @@ def regularize(grammar):
         )
         subgrammar = subgrammar_table(rule_set)
         grammar = subgrammar[grammar[0].head]  # eliminate dead rules (which is
-        # probably nonregular) and rebuild grammar property
+        # probably not in triple form) and rebuild grammar property
     return grammar
 
 
@@ -304,16 +358,20 @@ def approx(grammar):
 
 
 def eliminate_idle(grammar):
+    for rule in grammar:
+        print(rule)
+    print()
+
     def iteration(grammar):
-        subgrammar = subgrammar_table(grammar)
         for rule in grammar:
-            assert rule.is_regular()
-            if rule.body[0].is_terminal():
+            assert rule.is_triple()
+            if not rule.is_idle():
                 yield rule
                 continue
-
-            assert len(rule.body) == 1
-            for inline_rule in subgrammar[rule.body[0].nonterminal]:
+            assert rule.body[0].is_nonterminal()
+            for inline_rule in grammar:
+                if inline_rule.head != rule.body[0].nonterminal:
+                    continue
                 inline_last = inline_rule.body[-1]
                 yield ProductionRule(
                     merge_predicate(rule.guard, inline_rule.guard),
@@ -369,14 +427,19 @@ class Regular:
             and exact
             and all(isinstance(byte, int) and 0 <= byte < 256 for byte in exact)
         )
-        assert concat is None or all(isinstance(part, Regular) for part in concat)
+        assert (
+            concat is None
+            or len(concat) != 1
+            and all(isinstance(part, Regular) for part in concat)
+        )
         assert (
             union is None
             or isinstance(union, set)
-            and union
+            and len(union) > 1
             and all(isinstance(variant, Regular) for variant in union)
         )
         assert star is None or isinstance(star, Regular)
+        assert repr_str is None or isinstance(repr_str, str)
         self.exact = exact
         self.concat = concat
         self.union = union
@@ -561,10 +624,10 @@ import unittest
 
 class TestCRG(unittest.TestCase):
     def test_is_regular(self):
-        self.assertFalse(varstring[0].is_regular())
+        self.assertFalse(varstring[0].is_triple())
         for item in varstring[1:]:
             with self.subTest(item=item):
-                self.assertTrue(item.is_regular())
+                self.assertTrue(item.is_triple())
         self.assertTrue(varstring[1].is_nonterminating())
         self.assertTrue(varstring[2].is_nonterminating())
         self.assertTrue(varstring[3].is_terminating())
@@ -572,8 +635,8 @@ class TestCRG(unittest.TestCase):
         self.assertTrue(varstring[5].is_terminating())
 
         self.assertTrue(dyck[0].is_terminating())
-        self.assertFalse(dyck[1].is_regular())
-        self.assertFalse(dyck[2].is_regular())
+        self.assertFalse(dyck[1].is_triple())
+        self.assertFalse(dyck[2].is_triple())
 
     def test_reachable(self):
         self.assertEqual(reachable_table(()), {})
