@@ -1,5 +1,46 @@
 """
 crg.py: Counting Regular Grammars implementation
+(subtitle: how to write Python like SQL)
+
+The main interface is `parse(grammar, extraction_grammar)`, which do all 
+required transformation from a frontend syntax tree to CRG.
+
+`grammar` and `extraction_grammar` has the same representation, which is a tuple
+of `ProductionRule`. The constructing arguments of `ProductionRule` and related
+`RuleItem` are asserted in `__init__`. For `extraction_grammar` it must also
+follow grammar convention, which is nonempty, and the first rule's head must be
+start symbol. For `grammar` there is no such requirement since it does not 
+define start symbol.
+
+The `guard` argument must be either `None` when there is no guard for the rule,
+or a dict whose key is variable identifier, and value is 2-tuple (low, high), to
+declare a `low <= variable < high` guard. One of low/high bound may be `None` if
+it's a single side guard. Some example:
+{x: (0, 1)} -> x == 0
+{x: (1, None)} -> x >= 1, or x > 0 (the two are equal for integer x)
+{x: (1, None), y: (None, 1)} -> x > 0 && y < 1
+(TODO: variable as bound?)
+
+Notice that because of hashable requirement, when guard appears in `parse`'s
+result (detail below), it is wrapped as `frozenset(guard.items())`, for example
+`{x: (0, 1)}` becomes `frozenset({(x, (0, 1))})`. If the original dict form is
+desired simply pass it to `dict()`.
+
+(TODO: define `action` representation)
+
+The result of `parse` is a generator of (state, guard table). Wrap it in tuple
+in most case to make it persistent. The state is the nonterminal symbol in CRG
+and is also the state of CA. Initial state is the first generated one.
+
+Guard table is a dict whose key is guard in `frozenset` style, and the value is
+a tuple of transitions. Each (state, guard) pair is a "configuration" (or maybe
+a set of configuration) of CA, and the transition list is the description of the
+LPDFA for this configuration. Each item in the transition list is a tuple of
+(priority, regular, action, target). `action` may be `None` if no action is 
+needed, and `target` may be `None` for the whole CA reaching accepted state.
+Notice that the fallback "fail" transition of LPDFA is not appended.
+
+Refer to the last part of the source for some examples.
 """
 
 
@@ -466,24 +507,26 @@ def optimize(grammar, extraction_grammar):
 
 def split_guard(transition_list):
     assert len(set(source for _, source, *_ in transition_list)) <= 1
-    marker_table = {}
-    for guard, *_ in transition_list:
-        if not guard:
-            continue
-        marker_table = {
-            variable: marker_table.get(variable, set())
-            | set(marker for marker in guard.get(variable, ()) if marker is not None)
-            for variable in marker_table.keys() | guard.keys()
-        }
     marker_table = {
-        variable: sorted(marker_set) for variable, marker_set in marker_table.items()
+        variable: sorted(
+            {
+                marker
+                for guard, *_ in transition_list
+                if guard is not None
+                for marker in guard.get(variable, ())
+                if marker is not None
+            }
+        )
+        for guard, *_ in transition_list
+        if guard is not None
+        for variable in guard.keys()
     }
 
     def split_bound(marker_list, bound):
         low, high = bound
         level = low
         for marker in marker_list:
-            # marker in [level, high)
+            # marker in (level, high]
             if (level is None or level < marker) and (high is None or marker <= high):
                 yield level, marker
                 level = marker
@@ -496,21 +539,14 @@ def split_guard(transition_list):
             yield None
             return
 
-        def yield_one(item_list):
-            if not item_list:
-                yield {}
-                return
-            (variable, bound_list), *item_list = item_list
-            for bound in bound_list:
-                for rest in yield_one(item_list):
-                    yield {variable: bound, **rest}
-
-        yield from yield_one(
-            tuple(
-                (variable, tuple(split_bound(marker_table[variable], bound)))
-                for variable, bound in guard.items()
+        split_gen = ({},)
+        for variable, bound in guard.items():
+            split_gen = (  # as lazy as Haskell
+                {variable: splitted, **prev}
+                for prev in split_gen
+                for splitted in split_bound(marker_table[variable], bound)
             )
-        )
+        yield from split_gen
 
     for guard, _, *rest in transition_list:
         yield set(
@@ -519,7 +555,10 @@ def split_guard(transition_list):
 
 
 def parse(grammar, extraction_grammar):
+    import sys
+
     transition_list = tuple(optimize(grammar, extraction_grammar))
+    assert sys.version_info >= (3, 7)  # for ordered dict implementation
     for source in dict.fromkeys(source for _, source, *_ in transition_list):
         split_list = tuple(
             split_guard(
