@@ -213,45 +213,48 @@ def regularize(grammar):
         if rule.body[0].is_nonterminal():  # and is normal
             symbol = rule.body[0].nonterminal
             action = rule.body[0].action
+            if not all(rule.is_triple() for rule in subgrammar[symbol]):
+                # the rewrite procedure under this condition proposed by paper
+                # is only working when subgrammar is regular already
+                # however it is guaranteed that the subgrammar will eventually
+                # become regular, so just save it for following iteration
+                yield rule
+                return
+
             rename = RuleItem.new_nonterminal(symbol)
             yield ProductionRule(rule.guard, rule.head, (RuleItem(nonterminal=rename),))
-            rename_grammar = (
+
+            rename_grammar = tuple(
                 rule.rewrite(symbol, rename) for rule in subgrammar[symbol]
             )
+            for subgrammar_nonterminal in set(rule.head for rule in rename_grammar):
+                if subgrammar_nonterminal == rename:
+                    continue
+                rename_nonterminal = RuleItem.new_nonterminal(subgrammar_nonterminal)
+                rename_grammar = tuple(
+                    rule.rewrite(subgrammar_nonterminal, rename_nonterminal)
+                    for rule in rename_grammar
+                )
+
             for rename_rule in rename_grammar:
-                # CUSTOMIZE: here we have a major divergance compare to paper.
-                #
-                # in section IV.C, when Y1 (i.e. `rule.body[0]`) is normal
-                # nonterminal, the paper discuss two cases where rules from
-                # subgrammar[Y1] is terminating or nonterminating. This implies
-                # all rules in subgrammar[Y1] is regular, i.e. in triple form.
-                # That is not the case in this implementation, and the paper
-                # does not clearly show that how that would become the case.
-                #
-                # additionally, according to paper's procedure any action
-                # following Y1 would be discard. Due to these reasons the
-                # procedure is modified as this:
-                #
-                # for rule in subgrammar[Y1] (i.e. `rename_rule`), if the rule
-                # is ending with a terminal (effectively "terminating" the
-                # parsing of Y1, but not necessary to be a terminating regular
-                # rule as the paper defined), compose Y1's action into that
-                # terminal, then append Y2Y3... to the rule. otherwise, Y1 is
-                # not complete parsing yet and the rule is yield unchanged
-                if rename_rule.body[-1].is_terminal():
+                # according to paper's procedure any action following "Y1" (i.e.
+                # `rule.body[0]`) would be discard. to avoid, we modified the
+                # procedure here, to compose Y1's action into terminating rule's
+                # terminal's action, then append Y2Y3... to the rule
+                if rename_rule.is_terminating():
+                    assert len(rename_rule.body) == 1
                     yield ProductionRule(
                         rename_rule.guard,
                         rename_rule.head,
-                        rename_rule.body[:-1]
-                        + (
+                        (
                             RuleItem(
-                                terminal=rename_rule.body[-1].terminal,
+                                terminal=rename_rule.body[0].terminal,
                                 action=compose_action(
                                     rename_rule.body[-1].action, action
                                 ),
                             ),
-                        )
-                        + rule.body[1:],
+                            *rule.body[1:],
+                        ),
                     )
                 else:
                     # here the paper describes as "for each nonterminaing..."
@@ -259,7 +262,7 @@ def regularize(grammar):
                     # however the case above also produce nonregular rules so
                     # i don't think this is required to be regular either
                     yield rename_rule
-        else:
+        else:  # rule.body[0] is terminal
             # not assert n > 2 here, there is a silly case where rule body
             # contains two terminal symbols
             name = RuleItem.new_nonterminal(rule.head)
@@ -358,10 +361,6 @@ def approx(grammar):
 
 
 def eliminate_idle(grammar):
-    for rule in grammar:
-        print(rule)
-    print()
-
     def iteration(grammar):
         for rule in grammar:
             assert rule.is_triple()
@@ -391,10 +390,11 @@ def eliminate_idle(grammar):
     old_grammar = None
     while grammar != old_grammar:
         old_grammar, grammar = grammar, tuple(iteration(grammar))
-    return grammar
+    return subgrammar_table(grammar)[grammar[0].head]
 
 
 def optimize(grammar, extraction_grammar):
+    grammar = subgrammar_table(extraction_grammar + grammar)[grammar[0].head]
     subgrammar = subgrammar_table(grammar)
     normal = normal_set(grammar)
     approx_list = tuple(
@@ -678,3 +678,4 @@ if __name__ == "__main__":
     print()
     for rule in optimize(dyck, dyck_extraction):
         print(rule)
+    print()
