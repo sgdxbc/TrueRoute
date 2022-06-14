@@ -3,7 +3,7 @@ crg.py: Counting Regular Grammars implementation
 (subtitle: how to write Python like SQL)
 
 The main interface is `parse(grammar, extraction_grammar)`, which do all 
-required transformation from a frontend syntax tree to CRG.
+required transformation from a frontend context free grammar to CRG.
 
 `grammar` and `extraction_grammar` has the same representation, which is a tuple
 of `ProductionRule`. The constructing arguments of `ProductionRule` and related
@@ -839,10 +839,10 @@ dyck_extraction = (
     ),
 )
 
-import unittest
+from unittest import TestCase
 
 
-class TestCRG(unittest.TestCase):
+class TestCRG(TestCase):
     def test_is_regular(self):
         self.assertFalse(varstring[0].is_triple())
         for rule in varstring[1:]:
