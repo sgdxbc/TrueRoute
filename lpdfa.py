@@ -15,17 +15,11 @@ class State:
         if priority is None:
             priority = (
                 max(
-                    *(
-                        target.priority
-                        for target_set in byte_table.values()
-                        for target in target_set
-                    ),
-                    *(
-                        target.decision[0]
-                        for target_set in byte_table.values()
-                        for target in target_set
-                        if target.decision
-                    ),
+                    max(target.priority, target.decision[0])
+                    if target.decision
+                    else target.priority
+                    for target_set in byte_table.values()
+                    for target in target_set
                 )
                 if byte_table
                 else -1
@@ -253,7 +247,7 @@ from unittest import TestCase
 
 class TestLPDFA(TestCase):
     def test_powerset(self):
-        qacc = State({}, priority=1, decision=(None, "done"))
+        qacc = State({}, decision=(1, None, "done"))
         q0 = State({0: {qacc}})
         s0 = q0.powerset()
         self.assertTrue(all(s.is_deterministic() for s in s0.reachable()))
