@@ -505,8 +505,8 @@ def optimize(grammar, extraction_grammar):
             assert rule.body[1].is_nonterminal()
             nonterminal = rule.body[1].nonterminal
         yield (
-            rule.guard,
             rule.head,
+            rule.guard,
             rule.priority,
             rule.body[0].terminal,
             rule.body[0].action,
@@ -515,17 +515,17 @@ def optimize(grammar, extraction_grammar):
 
 
 def split_guard(transition_list):
-    assert len(set(source for _, source, *_ in transition_list)) <= 1
+    assert len(set(source for source, *_ in transition_list)) <= 1
     marker_table = {
         variable: sorted(
             {
                 marker
-                for guard, *_ in transition_list
+                for _, guard, *_ in transition_list
                 for marker in guard.get(variable, ())
                 if marker is not None
             }
         )
-        for guard, *_ in transition_list
+        for _, guard, *_ in transition_list
         for variable in guard.keys()
     }
 
@@ -551,7 +551,7 @@ def split_guard(transition_list):
             )
         yield from split_gen
 
-    for guard, _, *rest in transition_list:
+    for _, guard, *rest in transition_list:
         yield set(frozenset(splitted.items()) for splitted in split(guard)), tuple(rest)
 
 
@@ -560,13 +560,13 @@ def parse(grammar, extraction_grammar):
 
     transition_list = tuple(optimize(grammar, extraction_grammar))
     assert sys.version_info >= (3, 7)  # for ordered dict implementation
-    for source in dict.fromkeys(source for _, source, *_ in transition_list):
+    for source in dict.fromkeys(source for source, *_ in transition_list):
         split_list = tuple(
             split_guard(
                 tuple(
                     transition
                     for transition in transition_list
-                    if transition[1] == source
+                    if transition[0] == source
                 )
             )
         )
@@ -910,13 +910,13 @@ class TestCRG(unittest.TestCase):
         for guard in ({}, {"x": (0, 1)}, {"x": (0, 1), "y": (0, 1)}):
             with self.subTest(guard=guard):
                 self.assertEqual(
-                    tuple(split_guard(((guard, "S"),))),
+                    tuple(split_guard((("S", guard),))),
                     (({frozenset(guard.items())}, ()),),
                 )
 
         x01, x02, x12 = {"x": (0, 1)}, {"x": (0, 2)}, {"x": (1, 2)}
         self.assertEqual(
-            tuple(split_guard(((x01, "S", "0..1"), (x02, "S", "0..2")))),
+            tuple(split_guard((("S", x01, "0..1"), ("S", x02, "0..2")))),
             (
                 ({frozenset(x01.items())}, ("0..1",)),
                 ({frozenset(x01.items()), frozenset(x12.items())}, ("0..2",)),
@@ -942,8 +942,8 @@ def action_str(action):
 
 if __name__ == "__main__":
     print(
-        "{:20}{:14}{:4}{:20}{:20}{}".format(
-            "Guard", "Source", "Pri", "Regular", "Action", "Target"
+        "{:14}{:20}{:4}{:20}{:20}{}".format(
+            "Source", "Guard", "Pri", "Regular", "Action", "Target"
         )
     )
 
@@ -954,7 +954,7 @@ if __name__ == "__main__":
                 action = action_str(action) if action else ""
                 target = target or "(accept)"
                 print(
-                    f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
+                    f"{source:14}{guard:20}{priority:<4}{str(regular):20}{action:20}{target}"
                 )
     print()
 
@@ -965,6 +965,6 @@ if __name__ == "__main__":
                 action = action_str(action) if action else ""
                 target = target or "(accept)"
                 print(
-                    f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
+                    f"{source:14}{guard:20}{priority:<4}{str(regular):20}{action:20}{target}"
                 )
     print()
