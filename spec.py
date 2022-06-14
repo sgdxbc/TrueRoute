@@ -7,30 +7,30 @@ from crg import ProductionRule, RuleItem, Regular, compose_action
 
 
 def name(s):
-    assert s[0] in ascii_letters + "_"
+    assert s[0] in ascii_letters + "_", f"expect name: {s.splitlines()[0]}"
     for i in range(1, len(s)):
         if s[i] not in ascii_letters + digits + "_":
             break
-    return s[:i], s[i:].strip()
+    return s[:i], s[i:].lstrip()
 
 
 def skip(s, pattern):
     assert s.startswith(pattern)
-    return None, s[len(pattern) :].strip()
+    return None, s[len(pattern) :].lstrip()
 
 
 def bracket(s):
     assert s[0] == "["
     # there should not be any possible nested bracket i guess...
     raw, s = s[1:].split("]", maxsplit=1)
-    return (part.strip() for part in raw.split(";")), s.strip()
+    return (part.strip() for part in raw.split(";")), s.lstrip()
 
 
 def regex(s):
     assert s[0] == "/"
     for i in range(1, len(s)):
         if s[i] == "/" and s[i - 1] != "\\":
-            return s[1:i], s[i + 1 :].strip()
+            return s[1:i], s[i + 1 :].lstrip()
     assert False, "unclosed regex"
 
 
@@ -39,7 +39,7 @@ def unsigned(s):
     for i in range(1, len(s)):
         if s[i] not in digits:
             break
-    return int(s[:i]), s[i:].strip()
+    return int(s[:i]), s[i:].lstrip()
 
 
 def guard(s):
@@ -91,7 +91,9 @@ def rule(s):
         if s[0] == "/":
             terminal, s = regex(s)
             # TODO
-            if terminal == ".":
+            if terminal == "":
+                terminal = Regular.epsilon
+            elif terminal == ".":
                 terminal = Regular.wildcard
             else:
                 terminal = Regular.new_literal(bytes(terminal, "utf-8"))
@@ -130,10 +132,10 @@ def rule(s):
 
 
 def grammar(s):
-    s += "\n"
     while s:
         if s[0] == "#":
             [_, s] = s.split("\n", maxsplit=1)
+            s = s.lstrip()
         else:
             decl, s = rule(s)
             yield decl
@@ -165,12 +167,12 @@ from crg import varstring as varstring_grammar, dyck as dyck_grammar
 
 class TestSpec(TestCase):
     def test_grammar(self):
-        self.assertEqual(tuple(grammar(varstring.strip())), varstring_grammar)
-        self.assertEqual(tuple(grammar(dyck.strip())), dyck_grammar)
+        self.assertEqual(tuple(grammar(varstring.lstrip())), varstring_grammar)
+        self.assertEqual(tuple(grammar(dyck.lstrip())), dyck_grammar)
 
     def test_extraction(self):
         self.assertEqual(
-            tuple(grammar(dyck_extraction.strip())),
+            tuple(grammar(dyck_extraction.lstrip())),
             (
                 ProductionRule(
                     "X",

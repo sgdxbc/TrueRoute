@@ -59,12 +59,12 @@ class RuleItem:
     @classmethod
     def new_nonterminal(cls, name_hint):
         id = 0
-        [name_hint, *postfix] = name_hint.rsplit("_", maxsplit=1)
+        [name_hint, *postfix] = name_hint.split("%", maxsplit=1)
         if postfix:
             id = int(postfix[0]) + 1
-        while f"{name_hint}_{id}" in cls.nonterminal_set:
+        while f"{name_hint}%{id}" in cls.nonterminal_set:
             id += 1
-        name = f"{name_hint}_{id}"
+        name = f"{name_hint}%{id}"
         cls.nonterminal_set.add(name)
         return name
 
@@ -270,14 +270,27 @@ def normal_set(grammar):
 
 
 def regularize(grammar):
-    def rewrite_rule(rule, subgrammar, normal):
-        if rule.head not in normal:
-            raise Exception(f"token {rule.head} must be normal")
+    # instead of assert normal invariant in every iteration, we only do it once
+    # before looping
+    # this is because a transformation from X -> aY1Y2...X to X -> aX';
+    # X' -> Y1Y2...X breaks normal assertion: now X' is reachable from X while
+    # X is also reachable from X', make them not normal
+    # for now i choose to believe that the procedure suppose to work as long as
+    # initially normal invariant holds
+    normal = normal_set(grammar)
+    assert all(rule.head in normal for rule in grammar)
+    assert all(
+        rule.body[0].is_terminal() or rule.body[0].nonterminal in normal
+        for rule in grammar
+    )
+
+    def rewrite_rule(
+        rule,
+        subgrammar,
+    ):
         if rule.is_triple():
             yield rule
             return
-        if rule.body[0].is_nonterminal() and rule.body[0].nonterminal not in normal:
-            raise Exception(f"incorrect rule: {rule} first body item is not normal")
         if rule.body[0].is_nonterminal():  # and is normal
             symbol = rule.body[0].nonterminal
             action = rule.body[0].action
@@ -350,9 +363,7 @@ def regularize(grammar):
         # can we easily avoid yielding duplicated rules?
         # so this `rule_set` not necessary to be unordered which break property
         rule_set = set(
-            rewrite
-            for rule in grammar
-            for rewrite in rewrite_rule(rule, subgrammar, normal_set(grammar))
+            rewrite for rule in grammar for rewrite in rewrite_rule(rule, subgrammar)
         )
         subgrammar = subgrammar_table(rule_set)
         grammar = subgrammar[grammar[0].head]  # eliminate dead rules (which is
@@ -452,24 +463,18 @@ def eliminate_idle(grammar):
                 yield rule
                 continue
             assert rule.body[0].is_nonterminal()
+            assert not rule.body[0].action  # because of the modification of
+            # "idle" definition in this implementation
             for inline_rule in grammar:
                 if inline_rule.head != rule.body[0].nonterminal:
                     continue
-                inline_last = inline_rule.body[-1]
                 yield ProductionRule(
                     rule.head,
                     merge_predicate(rule.guard, inline_rule.guard),
                     (rule.priority + inline_rule.priority) // 2,
-                    (
-                        *inline_rule.body[:-1],
-                        RuleItem(
-                            terminal=inline_last.terminal,
-                            nonterminal=inline_last.nonterminal,
-                            action=compose_action(
-                                inline_last.action, rule.body[0].action
-                            ),
-                        ),
-                    ),
+                    # omit composing action in this implementation
+                    # we have asserted there is no action above
+                    inline_rule.body,
                 )
 
     old_grammar = None
@@ -626,9 +631,12 @@ class Regular:
     def new_exclude(opposite):
         assert isinstance(opposite, Regular)
         assert opposite.is_exact()
+        opposite_repr = opposite.repr_str or "".join(
+            chr(byte) for byte in opposite.exact
+        )
         return Regular(
             exact=Regular.wildcard.exact - opposite.exact,
-            repr_str="[^{opposite.exact_repr}]",
+            repr_str=f"[^{opposite_repr}]",
         )
 
     @staticmethod
