@@ -77,7 +77,7 @@ class RuleItem:
         return counter
 
     def __str__(self):
-        action = f" ({self.action})" if self.action else ""
+        action = f" ({action_str(self.action)})" if self.action else ""
         if self.is_terminal():
             return f"/{self.terminal}/{action}"
         else:
@@ -521,13 +521,11 @@ def split_guard(transition_list):
             {
                 marker
                 for guard, *_ in transition_list
-                if guard is not None
                 for marker in guard.get(variable, ())
                 if marker is not None
             }
         )
         for guard, *_ in transition_list
-        if guard is not None
         for variable in guard.keys()
     }
 
@@ -544,13 +542,9 @@ def split_guard(transition_list):
             yield level, high
 
     def split(guard):
-        if guard is None:
-            yield None
-            return
-
         split_gen = ({},)
         for variable, bound in guard.items():
-            split_gen = (  # as lazy as Haskell
+            split_gen = tuple(
                 {variable: splitted, **prev}
                 for prev in split_gen
                 for splitted in split_bound(marker_table[variable], bound)
@@ -558,7 +552,7 @@ def split_guard(transition_list):
         yield from split_gen
 
     for guard, _, *rest in transition_list:
-        yield set(frozenset(splitted.items()) for splitted in split(guard)), rest
+        yield set(frozenset(splitted.items()) for splitted in split(guard)), tuple(rest)
 
 
 def parse(grammar, extraction_grammar):
@@ -579,7 +573,7 @@ def parse(grammar, extraction_grammar):
         guard_set = set(guard for split_set, _ in split_list for guard in split_set)
         yield source, (
             (
-                guard and dict(guard),
+                dict(guard),
                 (rest for split_set, rest in split_list if guard in split_set),
             )
             for guard in guard_set
@@ -911,6 +905,24 @@ class TestCRG(unittest.TestCase):
             },
         )
 
+    def test_split_guard(self):
+        self.assertEqual(tuple(split_guard(())), ())
+        for guard in ({}, {"x": (0, 1)}, {"x": (0, 1), "y": (0, 1)}):
+            with self.subTest(guard=guard):
+                self.assertEqual(
+                    tuple(split_guard(((guard, "S"),))),
+                    (({frozenset(guard.items())}, ()),),
+                )
+
+        x01, x02, x12 = {"x": (0, 1)}, {"x": (0, 2)}, {"x": (1, 2)}
+        self.assertEqual(
+            tuple(split_guard(((x01, "S", "0..1"), (x02, "S", "0..2")))),
+            (
+                ({frozenset(x01.items())}, ("0..1",)),
+                ({frozenset(x01.items()), frozenset(x12.items())}, ("0..2",)),
+            ),
+        )
+
 
 def guard_str(guard):
     def bound_str(bound):
@@ -919,9 +931,13 @@ def guard_str(guard):
         high = str(high) if high is not None else ""
         return f"{low}..{high}"
 
-    return " & ".join(
+    return "; ".join(
         f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
     )
+
+
+def action_str(action):
+    return "; ".join(str(step) for step in action)
 
 
 if __name__ == "__main__":
@@ -935,7 +951,7 @@ if __name__ == "__main__":
         for guard, transition_list in config_list:
             guard = guard_str(guard) if guard else ""
             for priority, regular, action, target in transition_list:
-                action = str(action) if action else ""
+                action = action_str(action) if action else ""
                 target = target or "(accept)"
                 print(
                     f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
@@ -946,7 +962,7 @@ if __name__ == "__main__":
         for guard, transition_list in config_list:
             guard = guard_str(guard) if guard else ""
             for priority, regular, action, target in transition_list:
-                action = str(action) if action else ""
+                action = action_str(action) if action else ""
                 target = target or "(accept)"
                 print(
                     f"{guard:20}{source:14}{priority:<4}{str(regular):20}{action:20}{target}"
