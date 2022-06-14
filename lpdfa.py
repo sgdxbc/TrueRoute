@@ -1,15 +1,19 @@
 """
 lpdfa.py: Labeled Priority Deterministic Finite Automata implementation.
 """
+from crg import Regular
 
 
 class State:
     def __init__(self, byte_table, priority=None, decision=None):
-        assert byte_table or priority and decision
+        assert byte_table or priority is not None
         assert all(target_set for target_set in byte_table.values())
-        priority = priority or max(
-            target.priority for target_set in byte_table for target in target_set
-        )
+        if priority is None:
+            priority = max(
+                target.priority
+                for target_set in byte_table.values()
+                for target in target_set
+            )
         self.priority = priority
         self.byte_table = byte_table
         self.decision = decision
@@ -24,21 +28,30 @@ class State:
         if self.decision:
             action, target = self.decision
             action = f" do {action}" if action else ""
-            decision = f"\n  accept{action} {target}"
+            decision = f" accept{action} goto {target}"
 
         def target(name_table, target_set):
             if len(target_set) == 1:
                 return name_table[tuple(target_set)[0]]
             return "{" + ", ".join(name_table[target] for target in target_set) + "}"
 
+        def byte_table_str(byte_table):
+            if len(byte_table) == 256 and State.epsilon not in byte_table:
+                wildcard_target = set(
+                    frozenset(target_set) for target_set in byte_table.values()
+                )
+                if len(wildcard_target) == 1:
+                    yield "  .    " + target(name_table, tuple(wildcard_target)[0])
+                    return
+            for byte, target_set in byte_table.items():
+                if byte != State.epsilon:
+                    byte = chr(byte).encode("unicode_escape").decode()
+                yield f"  {byte:4} " + target(name_table, target_set)
+
         return "\n".join(
             (
                 f"state {name_table[self]} priority {self.priority}{decision}",
-                *(
-                    f"  {chr(byte) if byte != State.epsilon else State.epsilon:4} "
-                    + target(name_table, target_set)
-                    for byte, target_set in self.name_table
-                ),
+                *byte_table_str(self.byte_table),
             )
         )
 
@@ -62,7 +75,10 @@ class State:
         )
 
     def is_deterministic(self):
-        return all(len(target_set) == 1 for target_set in self.byte_table.values())
+        return all(
+            byte != State.epsilon and len(target_set) == 1
+            for byte, target_set in self.byte_table.items()
+        )
 
     def is_accepted(self):
         return self.decision is not None
@@ -108,8 +124,130 @@ class State:
 
     @staticmethod
     def new_star(star, target):
-        raise NotImplementedError
+        inner_target = State({State.epsilon: {target}})
+        inner = State.new_regular(star, inner_target)
+        assert inner.priority == inner_target.priority
+        inner_target.byte_table[State.epsilon] |= {inner}
+        return inner
+
+    def powerset(self):
+        def epsilon_closure(subset):
+            for state in subset:
+                yield state
+                yield from epsilon_closure(state.byte_table.get(State.epsilon, set()))
+
+        def subset_move(subset, byte):
+            for state in subset:
+                yield from epsilon_closure(state.byte_table.get(byte, ()))
+
+        self_set = frozenset(epsilon_closure({self}))
+        # black/gray table:
+        #   {a subset of self.reachable() => {byte => another subset}}
+        # there will be a subset `{self_set}` which will override the intial
+        # placeholder
+        black_table, gray_table = {}, {self_set: {State.epsilon: self_set}}
+        while gray_table:
+            black_table, gray_table = black_table | gray_table, {
+                subset: {
+                    byte: frozenset(subset_move(subset, byte))
+                    for byte in set(
+                        byte
+                        for state in subset
+                        for byte in state.byte_table
+                        if byte != State.epsilon
+                    )
+                }
+                for byte_table in gray_table.values()
+                for subset in byte_table.values()
+                if subset not in black_table
+            }
+
+        state_table = {
+            subset: State(
+                {},
+                priority=max(state.priority for state in subset),
+                # a little bit hacky here: use `next(iter(sorted(...)), state)`
+                # to get the first item of sorted list, or `state` if list is
+                # empty
+                decision=next(
+                    iter(
+                        sorted(
+                            (state for state in subset if state.decision),
+                            key=lambda state: state.priority,
+                            reverse=True,
+                        )
+                    ),
+                    State({}, priority=0, decision=None),
+                ).decision,
+            )
+            for subset in black_table
+        }
+
+        for subset, state in state_table.items():
+            state.byte_table = {
+                byte: {state_table[target]}
+                for byte, target in black_table[subset].items()
+            }
+        return state_table[self_set]
 
 
 def construct(transition_list):
-    pass
+    if not any(regular == Regular.epsilon for _, regular, *_ in transition_list):
+        transition_list += ((0, Regular.epsilon, None, "fail"),)
+    return State(
+        {
+            State.epsilon: {
+                State.new_regular(
+                    regular,
+                    State({}, priority=priority, decision=(action, target or "done")),
+                )
+                for priority, regular, action, target in transition_list
+            }
+        }
+    ).powerset()
+
+
+# misc
+from unittest import TestCase
+
+
+class TestLPDFA(TestCase):
+    def test_powerset(self):
+        qacc = State({}, priority=1, decision=(None, "done"))
+        q0 = State({0: {qacc}})
+        s0 = q0.powerset()
+        self.assertTrue(all(s.is_deterministic() for s in s0.reachable()))
+        self.assertEqual(s0.priority, 1)
+        sacc = tuple(s0.byte_table[0])[0]
+        self.assertTrue(sacc.is_accepted())
+        self.assertFalse(sacc.byte_table)
+
+        q1 = State({1: {q0, qacc}})
+        s1 = q1.powerset()
+        self.assertTrue(all(s.is_deterministic() for s in s1.reachable()))
+        s0acc = tuple(s1.byte_table[1])[0]
+        self.assertTrue(s0acc.is_accepted())
+        sacc = tuple(s0acc.byte_table[0])[0]
+        self.assertTrue(sacc.is_accepted())
+
+        q2 = State({State.epsilon: {q1}})
+        q3 = State({3: {q2}})
+        s3 = q3.powerset()
+        self.assertTrue(all(s.is_deterministic() for s in s3.reachable()))
+        s12 = tuple(s3.byte_table[3])[0]
+        self.assertEqual(tuple(s12.byte_table[1])[0], s0acc)
+
+        # TODO write some real test cases
+
+
+from crg import parse, varstring, extr_varstring, guard_str
+
+if __name__ == "__main__":
+    for source, config_list in parse(varstring, extr_varstring):
+        for guard, transition_list in config_list:
+            state = construct(tuple(transition_list))
+            reachable = state.reachable()
+            name_table = {s: str(i) for i, s in enumerate(reachable)}
+            print(f"source {source} guard {guard_str(guard)} start {name_table[state]}")
+            for state in reachable:
+                print(state.format_str(name_table))

@@ -624,7 +624,9 @@ class Regular:
             return Regular(exact={byte_seq[0]})
         return Regular(
             concat=tuple(Regular(exact={byte}) for byte in byte_seq),
-            repr_str="".join(chr(byte) for byte in byte_seq),
+            repr_str="".join(
+                chr(byte).encode("unicode_escape").decode() for byte in byte_seq
+            ),
         )
 
     @staticmethod
@@ -801,7 +803,7 @@ varstring = (
         (RuleItem(terminal=Regular.epsilon),),
     ),
 )
-varstring_extraction = (
+extr_varstring = (
     ProductionRule(
         "X",
         {},
@@ -833,7 +835,7 @@ dyck = (
         ),
     ),
 )
-dyck_extraction = (
+extr_dyck = (
     ProductionRule(
         "X",
         {},
@@ -872,7 +874,7 @@ class TestCRG(TestCase):
             reachable_table(varstring), {"S": {"B", "V"}, "B": set(), "V": set()}
         )
         self.assertEqual(reachable_table(dyck), {"S": {"I"}, "I": {"S"}})
-        self.assertEqual(reachable_table(dyck_extraction + dyck)["X"], {"S", "I"})
+        self.assertEqual(reachable_table(extr_dyck + dyck)["X"], {"S", "I"})
 
     def test_subgrammar(self):
         self.assertEqual(subgrammar_table(()), {})
@@ -955,7 +957,7 @@ if __name__ == "__main__":
         )
     )
 
-    for source, config_list in parse(varstring, varstring_extraction):
+    for source, config_list in parse(varstring, extr_varstring):
         for guard, transition_list in config_list:
             guard = guard_str(guard) if guard else ""
             for priority, regular, action, target in transition_list:
@@ -966,7 +968,7 @@ if __name__ == "__main__":
                 )
     print()
 
-    for source, config_list in parse(dyck, dyck_extraction):
+    for source, config_list in parse(dyck, extr_dyck):
         for guard, transition_list in config_list:
             guard = guard_str(guard) if guard else ""
             for priority, regular, action, target in transition_list:
