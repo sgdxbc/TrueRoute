@@ -3,7 +3,7 @@ spec.py: Frontend of Counting Context Free Grammar, the grammar of protocol and
 extraction specifications.
 """
 from string import ascii_letters, digits
-from crg import ProductionRule, RuleItem, Regular
+from crg import ProductionRule, RuleItem, Regular, compose_action
 
 
 def name(s):
@@ -74,7 +74,19 @@ def rule(s):
     if s[0] in digits:
         priority, s = unsigned(s)
     _, s = skip(s, "->")
+
     item_list = []
+
+    def append_action(action):
+        if not item_list:
+            item_list.append(RuleItem(terminal=Regular.epsilon))
+        item_list[-1] = RuleItem(
+            terminal=item_list[-1].terminal,
+            nonterminal=item_list[-1].nonterminal,
+            action=compose_action(item_list[-1].action, action),
+        )
+
+    extraction_action = None
     while s[0] != ";":
         if s[0] == "/":
             terminal, s = regex(s)
@@ -85,18 +97,28 @@ def rule(s):
                 terminal = Regular.new_literal(bytes(terminal, "utf-8"))
             item_list += [RuleItem(terminal=terminal)]
         elif s[0] in ascii_letters + "_":
-            nonterminal, s = name(s)
-            item_list += [RuleItem(nonterminal=nonterminal)]
+            name_str, s = name(s)
+            if s[0] == "(":
+                append_action(("p := pos()",))
+                extraction_action = name_str
+                _, s = skip(s, "(")
+            else:
+                item_list += [RuleItem(nonterminal=name_str)]
         elif s[0] == "[":
-            if not item_list:
-                item_list = (RuleItem(terminal=Regular.epsilon),)
-            assert not item_list[-1].action, "double action"
+            assert not item_list or not item_list[-1].action, "double action"
             action_list, s = bracket(s)
-            item_list[-1] = RuleItem(
-                terminal=item_list[-1].terminal,
-                nonterminal=item_list[-1].nonterminal,
-                action=tuple(action_list),
-            )
+            append_action(tuple(action_list))
+        elif s[0] == ")" and extraction_action:
+            assert item_list
+            # i don't fully understand the reason to assign a possible-null
+            # value returned by custom extraction action back into `p`
+            # i guess the semantic requires there must be an assignment cause
+            # that, since `p` is the only variable who can be manipulated
+            # without corrupt things by now
+            # using a placeholder to make thing explicit
+            append_action((f"_ := {extraction_action}(p)",))
+            extraction_action = None
+            _, s = skip(s, ")")
         else:
             # consider presever the whole line for a better report
             assert False, f"unexpected {s.splitlines()[0]}"
@@ -117,7 +139,7 @@ def grammar(s):
             yield decl
 
 
-# misc part
+# misc
 varstring = """
 S -> B V;
 B -> /0/ [c := c * 2] B;
@@ -133,6 +155,10 @@ S -> I S;
 I -> /[/ S /]/;
 """
 
+dyck_extraction = """
+X -> /[/ param( S ) /]/ S;
+"""
+
 from unittest import TestCase
 from crg import varstring as varstring_grammar, dyck as dyck_grammar
 
@@ -141,3 +167,23 @@ class TestSpec(TestCase):
     def test_grammar(self):
         self.assertEqual(tuple(grammar(varstring.strip())), varstring_grammar)
         self.assertEqual(tuple(grammar(dyck.strip())), dyck_grammar)
+
+    def test_extraction(self):
+        self.assertEqual(
+            tuple(grammar(dyck_extraction.strip())),
+            (
+                ProductionRule(
+                    "X",
+                    {},
+                    ProductionRule.default_priority,
+                    (
+                        RuleItem(
+                            terminal=Regular.new_literal(b"["), action=("p := pos()",)
+                        ),
+                        RuleItem(nonterminal="S", action=("_ := param(p)",)),
+                        RuleItem(terminal=Regular.new_literal(b"]")),
+                        RuleItem(nonterminal="S"),
+                    ),
+                ),
+            ),
+        )
