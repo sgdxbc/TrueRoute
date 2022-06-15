@@ -160,8 +160,8 @@ class State:
         self_set = frozenset(epsilon_closure({self}))
         # black/gray table:
         #   {a subset of self.reachable() => {byte => another subset}}
-        # there will be a subset `{self_set}` which will override the intial
-        # placeholder
+        # initial gray table is not a valid black table (epsilon byte is not
+        # allowed after det.). but it will overwrite itself for sure
         black_table, gray_table = {}, {self_set: {State.epsilon: self_set}}
         while gray_table:
             black_table, gray_table = black_table | gray_table, {

@@ -8,29 +8,27 @@ import crg
 
 assert __name__ == "__main__"
 
-if len(sys.argv) == 4 and sys.argv[1] == "ccfg":
-    grammar = sys.argv[2]
-    extr_grammar = sys.argv[3]
-    command = "ccfg"
-elif len(sys.argv) == 4 and sys.argv[1] == "crg":
-    grammar = sys.argv[2]
-    extr_grammar = sys.argv[3]
-    command = "crg"
-elif len(sys.argv) == 3:
-    grammar = sys.argv[1]
+if len(sys.argv) >= 3 and sys.argv[1] == "ccfg":
     extr_grammar = sys.argv[2]
+    grammar = sys.argv[3:]
+    command = "ccfg"
+elif len(sys.argv) >= 3 and sys.argv[1] == "crg":
+    extr_grammar = sys.argv[2]
+    grammar = sys.argv[3:]
+    command = "crg"
+elif len(sys.argv) >= 2:
+    extr_grammar = sys.argv[1]
+    grammar = sys.argv[2:]
     command = "ca"
 else:
-    print(
-        "usage: cli.py [ccfg | crg] {protocol specification} {extraction specification}"
-    )
+    print("usage: cli.py [ccfg | crg] {extraction spec.} [protocol spec. ...]")
     sys.exit()
 
-grammar = pathlib.Path(grammar).read_text()
 extr_grammar = pathlib.Path(extr_grammar).read_text()
+grammar = (pathlib.Path(gram).read_text() for gram in grammar)
 
-grammar = tuple(spec.grammar(grammar.lstrip() + "\n"))
 extr_grammar = tuple(spec.grammar(extr_grammar.lstrip() + "\n"))
+grammar = sum((tuple(spec.grammar(gram.lstrip() + "\n")) for gram in grammar), start=())
 if command == "ccfg":
     for rule in extr_grammar + grammar:
         print(rule)
