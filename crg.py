@@ -249,11 +249,12 @@ def normal_set(grammar):
     # condition #2 and can only reach nonterminal in partial normal set
     # `partial_set`
     def condition2(symbol, partial_set):
-        return not any(
-            item.is_nonterminal() and item.nonterminal == symbol
+        return symbol not in (
+            item.nonterminal
             for rule in grammar
             if rule.head == symbol
             for item in rule.body[:-1]
+            if item.is_nonterminal()
         ) and all(
             reachable_symbol in partial_set
             and symbol not in reachable[reachable_symbol]
@@ -442,9 +443,11 @@ def approx(grammar):
             approx_symbol,
             {counter: (1, None)},
             # according to paper we should use a disjoin "other" terminal
-            # instead of a wildcard, however it is impossible to create a
-            # complement regular of arbitrary regular set. `Regular.new_exclude`
-            # only works on single byte (i.e. `exact`) set
+            # instead of a wildcard, however in this implementation, we are not
+            # yet supporting construct complement regular for arbitrary regular,
+            # because this pattern seems not appear in protocol specification.
+            #
+            # `Regular.new_exclude` only works on single byte (i.e. `exact`) set
             # although in paper and dyck we actually only need to exclude exact
             # byte, using wildcard accompanied by low priority should be
             # effectively equivalent, while still support `start` and `stop` to
@@ -645,7 +648,8 @@ class Regular:
     def new_union(variant_set):
         assert variant_set
         if len(variant_set) == 1:
-            return tuple(variant_set)[0]
+            (variant,) = variant_set
+            return variant
 
         union_varaint = set(
             inner_variant
@@ -681,7 +685,8 @@ class Regular:
             return self.repr_str
         if self.is_exact():
             if len(self.exact) == 1:
-                return chr(tuple(self.exact)[0])
+                (exact,) = self.exact
+                return chr(exact)
             exact = "".join(chr(byte) for byte in self.exact)
             return f"[{exact}]"
         if self.is_concat():

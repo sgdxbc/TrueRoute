@@ -1,34 +1,36 @@
 """
 lpdfa.py: Labeled Priority Deterministic Finite Automata implementation.
 """
-from crg import Regular, action_str
+from crg import action_str
 
 
 class State:
     # byte table: {[0-255] | eps => a set of `State` instance}
-    # priority is the max priority of decisions ahead, not include `decision`
+    # `ahead` is the decision ahead with maximum priority, not include `decision`
     # this enables LPDFA exit immediately when accepting maximum priority
     # decision
-    def __init__(self, byte_table, priority=None, decision=None):
+    # decision: (priority, action, target)
+    def __init__(self, byte_table, ahead=None, decision=None):
         assert all(target_set for target_set in byte_table.values())
-        if priority is None:
-            priority = (
-                max(
-                    max(target.priority, target.decision[0])
-                    if target.decision
-                    else target.priority
+        if not ahead and byte_table:
+            ahead = max(
+                (
+                    target.as_ahead()
                     for target_set in byte_table.values()
                     for target in target_set
-                )
-                if byte_table
-                else 0
+                ),
+                # no `key` argument because tuple always compare from the 1st
+                # component. all `max(decisions)` below is the same
+                # no `default` argument. here we assert there is at least one
+                # decision ahead
             )
-        self.priority = priority
+        assert ahead or decision
         self.byte_table = byte_table
+        self.ahead = ahead
         self.decision = decision
 
     # a special key in byte table for epsilon transition
-    # the "inner" epsilon, not the "outer" one in CRG/CA
+    # the "inner" epsilon, not the "outer" one in CRG/CA i.e. `Regular.epsilon`
     epsilon = "eps"
 
     # use this instead of __str__
@@ -41,20 +43,20 @@ class State:
 
         def target(name_table, target_set):
             if len(target_set) == 1:
-                return name_table[tuple(target_set)[0]]
+                (target,) = target_set
+                return name_table[target]
             return "{" + ", ".join(name_table[target] for target in target_set) + "}"
 
         def byte_table_str(byte_table):
             wildcard_target = None
             if len(byte_table) == 256 + int(State.epsilon in byte_table):
                 # or just use collections.Counter
-                wildcard_target = sorted(
+                wildcard_target = max(
                     byte_table.values(),
                     key=lambda target_set: sum(
                         byte_target == target_set for byte_target in byte_table.values()
                     ),
-                    reverse=True,
-                )[0]
+                )
             for byte, target_set in byte_table.items():
                 if target_set == wildcard_target:
                     continue
@@ -68,9 +70,11 @@ class State:
                     byte = "..."
                 yield f"  {byte}  " + target(name_table, wildcard_target)
 
+        maxpri = self.ahead[0] if self.ahead else "nil"  # instead of "None" so
+        # it looks like intentional (or Ruby)
         return "\n".join(
             (
-                f"state {name_table[self]} maxpri {self.priority}{decision}",
+                f"state {name_table[self]} maxpri {maxpri}{decision}",
                 *byte_table_str(self.byte_table),
             )
         )
@@ -89,14 +93,26 @@ class State:
     #   though), and not need to worry about name broken when aliased states get
     #   merged and everyone but one get discarded
 
-    def is_deterministic(self):
-        return all(
+    def as_deterministic(self):
+        assert all(
             byte != State.epsilon and len(target_set) == 1
             for byte, target_set in self.byte_table.items()
         )
+        return {byte: target for byte, (target,) in self.byte_table.items()}
 
     def is_accepted(self):
         return self.decision is not None
+
+    def ahead_priority(self):
+        return self.ahead[0] if self.ahead else -1  # or 0?
+
+    def as_ahead(self):
+        assert self.ahead or self.decision
+        if not self.decision:
+            return self.ahead
+        if not self.ahead:
+            return self.decision
+        return max(self.ahead, self.decision)
 
     def reachable(self):
         black_set, gray_set = set(), {self}  # borrow garbage collector terms
@@ -184,15 +200,18 @@ class State:
                 # this priority should be equal to the derived one from byte
                 # table. unfortunately byte table is not available at this time
                 # so we have to set it manually
-                priority=max(state.priority for state in subset),
-                decision=(
-                    sorted(
-                        (state.decision for state in subset if state.decision),
-                        key=lambda decision: decision[0],
-                        reverse=True,
-                    )
-                    + [None]
-                )[0],
+                ahead=max(
+                    (
+                        state.ahead
+                        for state in subset
+                        if state.ahead
+                        and state.ahead not in (state.decision for state in subset)
+                    ),
+                    default=None,
+                ),
+                decision=max(
+                    (state.decision for state in subset if state.decision), default=None
+                ),
             )
             for subset in black_table
         }
@@ -202,17 +221,14 @@ class State:
                 byte: {state_table[target]}
                 for byte, target in black_table[subset].items()
             }
-            assert state.byte_table or state.priority == 0
             # intuitively it is still necessary to maintain priority from the
             # begining NFA form, instead of construct values here
             # because this iteration is in arbitrary order while NFA was
             # strictly backward-constructed. but i don't know for sure
-            assert not state.byte_table or state.priority >= max(
-                max(target.priority, target.decision[0])
-                if target.decision
-                else target.priority
-                for target_set in state.byte_table.values()
-                for target in target_set
+            assert state.byte_table or state.ahead is None
+            assert not state.byte_table or state.ahead == max(
+                (target.as_ahead() for target in state.as_deterministic().values())
+                # assert not empty
             )
         return state_table[self_set]
 
