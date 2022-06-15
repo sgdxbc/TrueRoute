@@ -1,6 +1,13 @@
 """
 spec.py: Frontend of Counting Context Free Grammar, the grammar of protocol and
 extraction specifications.
+
+The main interface is `grammar(s)`, which accept a string of specification text.
+The string `s` must start with meaningful character including comment head, i.e.
+be `lstrip`ed. It also must end with at least one new line.
+
+`grammar` returns a generator of `ProductionRule`. Wrap it into `tuple()` in 
+order to pass into `crg.grammar`.
 """
 from string import ascii_letters, digits
 from crg import ProductionRule, RuleItem, Regular, compose_action

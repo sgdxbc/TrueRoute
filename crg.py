@@ -596,6 +596,21 @@ class Regular:
         )
         assert (
             exact is None
+            # in this implementation exact is a set of single byte, not single
+            # byte which is probably expected
+            # the rational is to support excluding pattern (i.e.
+            # `[^<char set>]`) without a full support for negative lookahead
+            # pattern (which is tentatively provided as `State.new_negate`). The
+            # latter one is not presented in protocol specification (at least
+            # HTTP protocol), and may require to be constructed into odd form of
+            # automata. so it is dropped
+            # as a result, i choose to extend the exact argument, into a special
+            # single-byte subset of union argument, for:
+            # * precisely indicate the regular that is able to be `exclude`,
+            #   i.e. all `exact` ones
+            # * happen to enable `State.new_exact` to generate more compact
+            #   automata for `[<char set>]` and `[^<char set>]` patterns.
+            #   however even not `powerset` will do the compaction
             or isinstance(exact, set)
             and exact
             and all(isinstance(byte, int) and 0 <= byte < 256 for byte in exact)
@@ -637,7 +652,7 @@ class Regular:
         assert isinstance(opposite, Regular)
         assert opposite.is_exact()
         opposite_repr = opposite.repr_str or "".join(
-            chr(byte) for byte in opposite.exact
+            chr(byte).encode("unicode_escape").deocde() for byte in opposite.exact
         )
         return Regular(
             exact=Regular.wildcard.exact - opposite.exact,
