@@ -1,7 +1,7 @@
 """
 lpdfa.py: Labeled Priority Deterministic Finite Automata implementation.
 """
-from crg import action_str
+from crg import Regular, action_str
 
 
 class State:
@@ -11,8 +11,10 @@ class State:
     # decision
     # decision: (priority, action, target)
     def __init__(self, byte_table, ahead=None, decision=None):
-        assert all(target_set for target_set in byte_table.values())
-        if not ahead and byte_table:
+        assert byte_table == "invalid" or all(
+            target_set for target_set in byte_table.values()
+        )
+        if not ahead and byte_table != "invalid" and byte_table:
             ahead = max(
                 (
                     target.as_ahead()
@@ -154,6 +156,22 @@ class State:
             {State.epsilon: {State.new_regular(regular, target) for regular in union}}
         )
 
+    # secret method prepared for future implementation of pattern negation
+    # (something like `(?!<pattern>).*`)
+    @staticmethod
+    def new_negate(negate, target):
+        return State(
+            {
+                State.epsilon: {
+                    State.new_star(Regular.wildcard, target),
+                    # using an `ahead` instead of `decision`
+                    # so the state adds no accepted decision and leads to the
+                    # "real" failure by empty byte table
+                    State.new_regular(negate, State({}, ahead=(-1, None, "phantom"))),
+                }
+            }
+        )
+
     @staticmethod
     def new_star(star, target):
         inner_target = State({State.epsilon: {target}})
@@ -196,16 +214,15 @@ class State:
 
         state_table = {
             subset: State(
-                {},
+                "invalid",
                 # this priority should be equal to the derived one from byte
                 # table. unfortunately byte table is not available at this time
                 # so we have to set it manually
                 ahead=max(
                     (
-                        state.ahead
-                        for state in subset
-                        if state.ahead
-                        and state.ahead not in (state.decision for state in subset)
+                        target.as_ahead()
+                        for target_set in byte_table.values()
+                        for target in target_set
                     ),
                     default=None,
                 ),
@@ -213,7 +230,7 @@ class State:
                     (state.decision for state in subset if state.decision), default=None
                 ),
             )
-            for subset in black_table
+            for subset, byte_table in black_table.items()
         }
 
         for subset, state in state_table.items():
@@ -244,8 +261,8 @@ def construct(transition_list):
     # practical for:
     # * early stopping, the processing stops at the first unknown byte, instead
     #   of consuming (while self looping on failure state) all remaining content
-    # * no need to assign a special "lowest" priority to failure decision. we
-    #   can only take one special priority value for "no more decision ahead"
+    # * no need to assign a special "lowest" priority to failure decision.
+    #   (currently -1 is in unused `State.new_negate` as lowest priority ahead.)
     # * great improvement on automata constructing performance
     # i guess this is also the choice of original FlowSifter implementation,
     # which may explain why they made the mistake in paper text ^_^
@@ -278,26 +295,26 @@ class TestLPDFA(TestCase):
         qacc = State({}, decision=(1, None, "done"))
         q0 = State({0: {qacc}})
         s0 = q0.powerset()
-        self.assertTrue(all(s.is_deterministic() for s in s0.reachable()))
-        self.assertEqual(s0.priority, 1)
-        sacc = tuple(s0.byte_table[0])[0]
+        self.assertEqual(s0.ahead, (1, None, "done"))
+        sacc = s0.as_deterministic()[0]
         self.assertTrue(sacc.is_accepted())
         self.assertFalse(sacc.byte_table)
 
         q1 = State({1: {q0, qacc}})
         s1 = q1.powerset()
-        self.assertTrue(all(s.is_deterministic() for s in s1.reachable()))
-        s0acc = tuple(s1.byte_table[1])[0]
+        s0acc = s1.as_deterministic()[1]
         self.assertTrue(s0acc.is_accepted())
-        sacc = tuple(s0acc.byte_table[0])[0]
+        sacc = s0acc.as_deterministic()[0]
         self.assertTrue(sacc.is_accepted())
+        self.assertEqual(s1.reachable(), {s1, s0acc, sacc})
 
         q2 = State({State.epsilon: {q1}})
         q3 = State({3: {q2}})
         s3 = q3.powerset()
-        self.assertTrue(all(s.is_deterministic() for s in s3.reachable()))
-        s12 = tuple(s3.byte_table[3])[0]
-        self.assertEqual(tuple(s12.byte_table[1])[0], s0acc)
+        s12 = s3.as_deterministic()[3]
+        s0acc = s12.as_deterministic()[1]
+        sacc = s0acc.as_deterministic()[0]
+        self.assertEqual(s3.reachable(), {s3, s12, s0acc, sacc})
 
         # TODO write some real test cases
 
