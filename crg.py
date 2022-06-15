@@ -39,6 +39,7 @@ transition of LPDFA is not appended.
 
 Refer to the last part of the source for some examples.
 """
+import string
 
 
 class RuleItem:
@@ -487,14 +488,13 @@ def eliminate_idle(grammar):
 
 
 def optimize(grammar, extraction_grammar):
-    grammar = subgrammar_table(extraction_grammar + grammar)[grammar[0].head]
-    normal = normal_set(grammar)
+    all_subgrammar = subgrammar_table(extraction_grammar + grammar)
     subgrammar = subgrammar_table(grammar)
+    normal = normal_set(grammar)
     approx_list = tuple(
         rule
-        for symbol in subgrammar  # for nonterminal in extraction assert to be
-        # normal
-        if symbol not in normal
+        for symbol in subgrammar  # nonterminal in extr not allow to approx
+        if symbol in all_subgrammar and symbol not in normal
         for rule in approx(subgrammar[symbol])
     )
     grammar = (
@@ -588,6 +588,16 @@ def parse(grammar, extraction_grammar):
         )
 
 
+# a relatively conversative string representation
+def byte_str(byte):
+    assert 0 <= byte < 256
+    if chr(byte) in string.ascii_letters + string.digits:
+        return chr(byte)
+    if chr(byte) in {"[", "]", "\\", "/", "+", "*", "?", "(", ")"}:
+        return "\\" + chr(byte)
+    return f"\\x{byte:02x}"
+
+
 class Regular:
     def __init__(self, exact=None, concat=None, union=None, star=None, repr_str=None):
         assert (
@@ -642,9 +652,7 @@ class Regular:
             return Regular(exact={byte_seq[0]})
         return Regular(
             concat=tuple(Regular(exact={byte}) for byte in byte_seq),
-            repr_str="".join(
-                chr(byte).encode("unicode_escape").decode() for byte in byte_seq
-            ),
+            repr_str="".join(byte_str(byte) for byte in byte_seq),
         )
 
     @staticmethod
@@ -652,7 +660,7 @@ class Regular:
         assert isinstance(opposite, Regular)
         assert opposite.is_exact()
         opposite_repr = opposite.repr_str or "".join(
-            chr(byte).encode("unicode_escape").deocde() for byte in opposite.exact
+            byte_str(byte) for byte in opposite.exact
         )
         return Regular(
             exact=Regular.wildcard.exact - opposite.exact,
@@ -702,7 +710,7 @@ class Regular:
             if len(self.exact) == 1:
                 (exact,) = self.exact
                 return chr(exact)
-            exact = "".join(chr(byte) for byte in self.exact)
+            exact = "".join(byte_str(byte) for byte in self.exact)
             return f"[{exact}]"
         if self.is_concat():
             return "".join(f"({part})" for part in self.concat)

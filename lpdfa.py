@@ -79,7 +79,7 @@ class State:
                 if target_set == wildcard_target:
                     continue
                 if byte != State.epsilon:
-                    byte = chr(byte).encode("unicode_escape").decode()
+                    byte = chr(byte) if chr(byte).isprintable() else f"\\x{byte:02x}"
                 yield f"  {byte:4} " + target(name_table, target_set)
             if wildcard_target:
                 if self.byte_table.get(State.epsilon, None) == wildcard_target:
@@ -213,7 +213,8 @@ class State:
         # allowed after det.). but it will overwrite itself for sure
         black_table, gray_table = {}, {self_set: {State.epsilon: self_set}}
         while gray_table:
-            black_table, gray_table = black_table | gray_table, {
+            # dict union is only added in 3.9, let's be nice
+            black_table, gray_table = {**black_table, **gray_table}, {
                 subset: {
                     byte: frozenset(subset_move(subset, byte))
                     for byte in set(
