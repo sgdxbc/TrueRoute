@@ -1,16 +1,15 @@
 """
 lpdfa.py: Labeled Priority Deterministic Finite Automata implementation.
 """
-from crg import Regular
+from crg import Regular, action_str
 
 
 class State:
     # byte table: {[0-255] | eps => a set of `State` instance}
-    # priority is the max priority of decisions ahead, NOT include `decision`
+    # priority is the max priority of decisions ahead, not include `decision`
     # this enables LPDFA exit immediately when accepting maximum priority
     # decision
     def __init__(self, byte_table, priority=None, decision=None):
-        assert byte_table or decision or priority is not None
         assert all(target_set for target_set in byte_table.values())
         if priority is None:
             priority = (
@@ -22,7 +21,7 @@ class State:
                     for target in target_set
                 )
                 if byte_table
-                else -1
+                else 0
             )
         self.priority = priority
         self.byte_table = byte_table
@@ -37,7 +36,7 @@ class State:
         decision = ""
         if self.decision:
             priority, action, target = self.decision
-            action = f" do {action}" if action else ""
+            action = f" do {action_str(action)}" if action else ""
             decision = f" accept priority {priority}{action} goto {target}"
 
         def target(name_table, target_set):
@@ -47,7 +46,7 @@ class State:
 
         def byte_table_str(byte_table):
             wildcard_target = None
-            if len(byte_table) == 256 and State.epsilon not in byte_table:
+            if len(byte_table) == 256 + int(State.epsilon in byte_table):
                 # or just use collections.Counter
                 wildcard_target = sorted(
                     byte_table.values(),
@@ -63,7 +62,11 @@ class State:
                     byte = chr(byte).encode("unicode_escape").decode()
                 yield f"  {byte:4} " + target(name_table, target_set)
             if wildcard_target:
-                yield "  ...  " + target(name_table, wildcard_target)
+                if self.byte_table.get(State.epsilon, None) == wildcard_target:
+                    byte = "..e"
+                else:
+                    byte = "..."
+                yield f"  {byte}  " + target(name_table, wildcard_target)
 
         return "\n".join(
             (
@@ -72,24 +75,19 @@ class State:
             )
         )
 
-    def __hash__(self):
-        return hash(
-            (
-                self.priority,
-                frozenset(
-                    (byte, target)
-                    for byte, target_set in self.byte_table.items()
-                    for target in target_set
-                ),
-                self.decision,
-            )
-        )
-
-    def __eq__(self, other):
-        return isinstance(other, State) and (
-            (self.priority, self.byte_table, self.decision)
-            == (other.priority, other.byte_table, other.decision)
-        )
+    # here we finally give up override `__hash__` and `__eq__`, instead just
+    # treat every instance of `State` different to each other
+    # one possible benefit from custom hash & eq is to determine equivalent
+    # states and merge them automatically when they are inserted into set
+    # however:
+    # * it is impossible to merge all equivalent states in this way, a global
+    #   minimization pass is always necessary
+    # * even worse it is prone to infinite recursive. although we could simply
+    #   stop exploring after certain threshold and fallback to same hash / not
+    #   eq, but that hardly merges anything due to automata's nature
+    # * we also get a chance to assign name to states (not deployed by now
+    #   though), and not need to worry about name broken when aliased states get
+    #   merged and everyone but one get discarded
 
     def is_deterministic(self):
         return all(
@@ -108,6 +106,7 @@ class State:
                 for state in gray_set
                 for target_set in state.byte_table.values()
                 for target in target_set
+                if target not in black_set
             }
         return black_set
 
@@ -182,26 +181,18 @@ class State:
         state_table = {
             subset: State(
                 {},
-                # here we must manually set priority instead of automatically
-                # derived from decision, because there is a chance to have a
-                # higher priority decision ahead, than all decision accepted by
-                # this state locally
                 # this priority should be equal to the derived one from byte
                 # table. unfortunately byte table is not available at this time
+                # so we have to set it manually
                 priority=max(state.priority for state in subset),
-                # a little bit hacky here: use `next(iter(sorted(...)), state)`
-                # to get the first item of sorted list, or `state` if list is
-                # empty
-                decision=next(
-                    iter(
-                        sorted(
-                            (state for state in subset if state.decision),
-                            key=lambda state: state.priority,
-                            reverse=True,
-                        )
-                    ),
-                    State({}, priority=0, decision=None),
-                ).decision,
+                decision=(
+                    sorted(
+                        (state.decision for state in subset if state.decision),
+                        key=lambda decision: decision[0],
+                        reverse=True,
+                    )
+                    + [None]
+                )[0],
             )
             for subset in black_table
         }
@@ -211,14 +202,15 @@ class State:
                 byte: {state_table[target]}
                 for byte, target in black_table[subset].items()
             }
-            assert state.byte_table or state.priority == -1
-            # TODO: do complete assertion (including decision priority part)
+            assert state.byte_table or state.priority == 0
             # intuitively it is still necessary to maintain priority from the
             # begining NFA form, instead of construct values here
             # because this iteration is in arbitrary order while NFA was
             # strictly backward-constructed. but i don't know for sure
             assert not state.byte_table or state.priority >= max(
-                target.priority
+                max(target.priority, target.decision[0])
+                if target.decision
+                else target.priority
                 for target_set in state.byte_table.values()
                 for target in target_set
             )
@@ -226,8 +218,28 @@ class State:
 
 
 def construct(transition_list):
-    if not any(regular == Regular.epsilon for _, regular, *_ in transition_list):
-        transition_list += ((0, Regular.epsilon, None, "fail"),)
+    # first this is a divergance from paper: in paper the "fail" transition is
+    # called epsilon rule, which happen on empty string. however a default
+    # failure on empty string cannot "guarantee the LPDFA will always return
+    # a value". so instead, we should fail on wildcard string (i.e. `.*`), which
+    # indeed goto failure on anything unspecified
+    # then, this is effectively equivalent to having a partial byte table, and
+    # goto failure on any byte not present in the table. this is better in
+    # practical for:
+    # * early stopping, the processing stops at the first unknown byte, instead
+    #   of consuming (while self looping on failure state) all remaining content
+    # * no need to assign a special "lowest" priority to failure decision. we
+    #   can only take one special priority value for "no more decision ahead"
+    # * great improvement on automata constructing performance
+    # i guess this is also the choice of original FlowSifter implementation,
+    # which may explain why they made the mistake in paper text ^_^
+
+    # notes for runtime: when meet unknown byte, if there is already decision
+    # seen before, consider as a normal transition to that decision; otherwise
+    # if no decision ever seen then goto failure
+
+    # if not any(regular == Regular.epsilon for _, regular, *_ in transition_list):
+    #     transition_list += ((0, Regular(star=Regular.wildcard), None, "fail"),)
     return State(
         {
             State.epsilon: {
@@ -279,9 +291,18 @@ from crg import parse, dyck, extr_dyck, guard_str
 if __name__ == "__main__":
     for source, config_list in parse(dyck, extr_dyck):
         for guard, transition_list in config_list:
+            guard = f" if {guard_str(guard)}" if guard else ""
             state = construct(tuple(transition_list))
-            reachable = state.reachable()
-            name_table = {s: str(i) for i, s in enumerate(reachable)}
-            print(f"source {source} guard {guard_str(guard)} start {name_table[state]}")
-            for state in reachable:
-                print(state.format_str(name_table))
+            reachable = state.reachable() - {state}
+            name_table = {
+                state: "s",
+                **{s: str(i + 1) for i, s in enumerate(reachable)},
+            }
+            print(f"from {source}{guard}")
+            for state in (state, *reachable):
+                print(
+                    "\n".join(
+                        f"  {line}"
+                        for line in state.format_str(name_table).splitlines()
+                    )
+                )
