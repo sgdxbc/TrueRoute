@@ -7,8 +7,8 @@ state). The function then construct these transitions into LPDFA.
 
 The `construct` function returns the initial `State` of the LPDFA. The important
 methods of `State` instance:
-* `reachable` returns a set of reachable `State` (including self). Call it on
-  initial state to get the full LPDFA.
+* `reachable` generates all reachable `State` (including self), in a 
+  deterministic order. Call it on initial state to get the full LPDFA.
 * `as_deterministic` returns a dict {byte => `State`}, where byte is integer in
   [0, 256). Any missing byte should transition into an implicit failure state.
 * property `ahead` and `decision` is either None or 3-tuple (priority, action,
@@ -16,6 +16,7 @@ methods of `State` instance:
 
 TODO: automata minimization
 """
+from itertools import count
 from crg import Regular, action_str
 
 
@@ -132,16 +133,18 @@ class State:
         return max(self.ahead, self.decision)
 
     def reachable(self):
-        black_set, gray_set = set(), {self}  # borrow garbage collector terms
+        id = count()
+        black_set, gray_set = {}, {self: next(id)}  # borrow garbage collector terms
         while gray_set:
-            black_set, gray_set = black_set | gray_set, {
-                target
+            black_set, gray_set = {**black_set, **gray_set}, {
+                target: next(id)
                 for state in gray_set
                 for target_set in state.byte_table.values()
                 for target in target_set
                 if target not in black_set
             }
-        return black_set
+        for state, _ in sorted(black_set.items(), key=lambda s: s[1]):
+            yield state
 
     @staticmethod
     def new_regular(regular, target):
@@ -322,7 +325,7 @@ class TestLPDFA(TestCase):
         self.assertTrue(s0acc.is_accepted())
         sacc = s0acc.as_deterministic()[0]
         self.assertTrue(sacc.is_accepted())
-        self.assertEqual(s1.reachable(), {s1, s0acc, sacc})
+        self.assertEqual(s1.reachable(), {s1: 0, s0acc: 1, sacc: 2})
 
         q2 = State({State.epsilon: {q1}})
         q3 = State({3: {q2}})
@@ -330,7 +333,7 @@ class TestLPDFA(TestCase):
         s12 = s3.as_deterministic()[3]
         s0acc = s12.as_deterministic()[1]
         sacc = s0acc.as_deterministic()[0]
-        self.assertEqual(s3.reachable(), {s3, s12, s0acc, sacc})
+        self.assertEqual(s3.reachable(), {s3: 0, s12: 1, s0acc: 2, sacc: 3})
 
         # TODO write some real test cases
 
@@ -343,13 +346,10 @@ if __name__ == "__main__":
         for guard, transition_list in config_list:
             guard = f" if {guard_str(guard)}" if guard else ""
             state = construct(tuple(transition_list))
-            reachable = state.reachable() - {state}
-            name_table = {
-                state: "s",
-                **{s: str(i + 1) for i, s in enumerate(reachable)},
-            }
+            reachable = tuple(state.reachable())
+            name_table = {s: str(i) for i, s in enumerate(reachable)}
             print(f"from {source}{guard}")
-            for state in (state, *reachable):
+            for state in reachable:
                 print(
                     "\n".join(
                         f"  {line}"

@@ -246,11 +246,11 @@ def normal_set(grammar):
         )
 
     while partial_set != old_set:
-        old_set, partial_set = partial_set, set(
+        old_set, partial_set = partial_set, {
             symbol
             for symbol in subgrammar
             if symbol in partial_set or condition2(symbol, partial_set)
-        )
+        }
     return partial_set
 
 

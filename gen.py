@@ -35,9 +35,10 @@ The guard for each relevant LPDFA would be:
 1 <= x < 3; (all y again)   rule 2, rule 3 or rule 3 depends on y
 3 <= x    ; (all y again)   rule 3
 
-The `relevant` is provided because:
+The `relevant` is still provided because:
 * In the case if we will switch to index by predicate in the future.
-* The splitting is more intuitutive and is good for presentation, so it is
+* Currently it is used to implement index by rule.
+* The splitting is more intuitive and is good for presentation, it is actually
   implemented before LPDFA, and used by cli's `ca` command. (Although some 
   duplication may occur, like the LPDFA for sole rule 3 above.) In comparision
   a splitting of index by rule for the above example would be (suppose p1 means
@@ -113,6 +114,16 @@ def relevant(transition_list):
             )
             for guard in guard_set
         )
+
+
+def serialize(transition_list):
+    (start_name, *_), *_ = transition_list
+    state_list = (
+        start_name,
+        *sorted({name for name, *_ in transition_list} - {start_name}),
+    )
+    yield len(state_list)
+    state_table = {name: i + 1 for i, name in enumerate(state_list)}
 
 
 # misc
