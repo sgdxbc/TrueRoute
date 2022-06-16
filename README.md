@@ -2,7 +2,7 @@
 
 Developed with Python 3.10.5, but should work on many recent versions.
 
-**Run unit tests.** `python -m unittest crg.py lpdfa.py spec.py`
+**Run unit tests.** `python -m unittest crg.py lpdfa.py spec.py gen.py`
 
 **Run compiler.** Use `python -m cli` with arguments to generate various outputs.
 

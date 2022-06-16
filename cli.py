@@ -6,6 +6,7 @@ import pathlib
 import spec
 import crg
 import lpdfa
+import gen
 
 assert __name__ == "__main__"
 
@@ -31,27 +32,23 @@ if command == "ccfg":
         print(rule)
     sys.exit()
 
-grammar = crg.parse(grammar, extr_grammar)
+grammar = crg.optimize(grammar, extr_grammar)
 if command == "crg":
     print(
         "{:20}{:20}{:4}{:30}{:26}{}".format(
             "Source", "Guard", "Pri", "Regular", "Action", "Target"
         )
     )
-    for source, config_list in grammar:
-        for guard, transition_list in config_list:
-            guard = crg.guard_str(guard) if guard else ""
-            for priority, regular, action, target in transition_list:
-                action = crg.action_str(action) if action else ""
-                target = target or "(accept)"
-                regular = str(regular)
-                print(
-                    f"{source:20}{guard:20}{priority:<4}{regular:30}{action:26}{target}"
-                )
+    for source, guard, priority, regular, action, target in grammar:
+        guard = crg.guard_str(guard) if guard else ""
+        action = crg.action_str(action) if action else ""
+        target = target or "(accept)"
+        regular = str(regular)
+        print(f"{source:20}{guard:20}{priority:<4}{regular:30}{action:26}{target}")
     sys.exit()
 
 if command == "ca":
-    for source, config_list in grammar:
+    for source, config_list in gen.relevant(tuple(grammar)):
         for guard, transition_list in config_list:
             guard = f" if {crg.guard_str(guard)}" if guard else ""
             state = lpdfa.construct(tuple(transition_list))
