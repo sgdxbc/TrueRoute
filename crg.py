@@ -656,7 +656,7 @@ class Regular:
         )
 
     @staticmethod
-    def new_union(variant_set):
+    def new_union(variant_set, repr_str=None):
         if not variant_set:
             return Regular.epsilon
 
@@ -674,7 +674,8 @@ class Regular:
                         for variant in variant_set
                         if variant.is_exact()
                         for byte in variant.exact
-                    )
+                    ),
+                    repr_str=repr_str,  # a little bit tricky here...
                 )
             }
             if any(variant.is_exact() for variant in variant_set)
@@ -687,7 +688,7 @@ class Regular:
         )
         union = union_varaint | exact_variant | other_variant
         assert union
-        return Regular(union=union) if len(union) > 1 else max(union)
+        return Regular(union=union, repr_str=repr_str) if len(union) > 1 else max(union)
 
     def __str__(self):
         if self.repr_str:
@@ -695,15 +696,17 @@ class Regular:
         if self.is_exact():
             if len(self.exact) == 1:
                 (exact,) = self.exact
-                return chr(exact)
+                return byte_str(exact)
+            if self.exact == Regular.wildcard.exact:
+                return "."
             exact = "".join(byte_str(byte) for byte in self.exact)
             return f"[{exact}]"
         if self.is_concat():
-            return "".join(f"({part})" for part in self.concat)
+            return "".join(str(part) for part in self.concat)
         if self.is_union():
-            return "|".join(f"({variant})" for variant in self.union)
+            return "|".join(str(variant) for variant in self.union)
         if self.is_star():
-            return f"({self.star})*"
+            return f"{self.star}*"
         # unreachable
 
     def __hash__(self):
@@ -740,7 +743,7 @@ class Regular:
 # borrow concat corner case for epsilon
 # consider make a dedicate argument if not work any more
 Regular.epsilon = Regular(concat=(), repr_str="(eps)")
-Regular.wildcard = Regular(exact=set(range(256)), repr_str=".")
+Regular.wildcard = Regular(exact=set(range(256)))
 
 
 def merge_predicate(guard, another_guard):

@@ -9,7 +9,7 @@ be `lstrip`ed. It also must end with at least one new line.
 `Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in 
 order to pass into `crg.grammar`.
 """
-from string import ascii_letters, digits
+from string import ascii_letters, digits, whitespace
 from crg import ProductionRule, RuleItem, Regular, compose_action
 
 
@@ -21,6 +21,8 @@ class Grammar:
 
         self.prev_item = None
         self.extract = None
+        self.regex_mode = False  # coarse-grained disable meaningless whitespace
+        # in regex. consider loose restriction if necessary
 
     def __iter__(self):
         while self.s:
@@ -41,19 +43,23 @@ class Grammar:
 
     def skip(self, pattern):
         assert self.s.startswith(pattern)
-        self.s = self.s[len(pattern) :].lstrip()
+        self.s = self.s[len(pattern) :]
+        if not self.regex_mode:
+            self.s = self.s.lstrip()
 
     def bracket(self):
         self.skip("[")
         # there should not be any possible nested bracket i guess...
-        raw, s = self.s[1:].split("]", maxsplit=1)
+        raw, s = self.s.split("]", maxsplit=1)
         self.s = s.lstrip()
         for part in raw.split(";"):
             yield part.strip()
 
     def regex(self):
         self.skip("/")
+        self.regex_mode = True
         regular = self.regex_union()
+        self.regex_mode = False
         self.skip("/")
         return regular
 
@@ -62,7 +68,9 @@ class Grammar:
         for i in range(1, len(self.s)):
             if self.s[i] not in digits:
                 break
-        u, self.s = int(self.s[:i]), self.s[i:].lstrip()
+        u, self.s = int(self.s[:i]), self.s[i:]
+        if not self.regex_mode:
+            self.s = self.s.lstrip()
         return u
 
     @staticmethod
@@ -114,10 +122,10 @@ class Grammar:
             return Regular(star=inner)
         if self.s[0] == "+":
             self.skip("+")
-            return Regular(concat=(inner, Regular(star=inner)))
+            return Regular(concat=(inner, Regular(star=inner)), repr_str=f"{inner}+")
         if self.s[0] == "?":
             self.skip("?")
-            return Regular.new_union({inner, Regular.epsilon})
+            return Regular.new_union({inner, Regular.epsilon}, repr_str=f"{inner}?")
         return inner
 
     def regex_group(self):
@@ -125,7 +133,13 @@ class Grammar:
             self.skip("(")
             inner = self.regex_union()
             self.skip(")")
-            return inner
+            return Regular(
+                exact=inner.exact,
+                concat=inner.concat,
+                union=inner.union,
+                star=inner.star,
+                repr_str=f"({inner})",
+            )
         return self.regex_set()
 
     def regex_set(self):
@@ -147,12 +161,33 @@ class Grammar:
         if self.s[:2] == "\\x":
             self.skip("\\x")
             exact = self.unsigned()
+            assert 0 <= exact < 256
+            exact = Regular(exact={exact})
         else:
             if self.s[0] == "\\":
                 self.skip("\\")
-                # TODO
-            exact, self.s = ord(self.s[0]), self.s[1:].lstrip()
-        return Regular(exact={exact})
+                exact_table = {
+                    "n": Regular(exact={ord("\n")}),
+                    "r": Regular(exact={ord("\r")}),
+                    "t": Regular(exact={ord("\t")}),
+                    "d": Regular(exact={ord(c) for c in digits}, repr_str="\\d"),
+                    "w": Regular(exact={ord(c) for c in ascii_letters}, repr_str="\\w"),
+                    "s": Regular(exact={ord(c) for c in whitespace}, repr_str="\\s"),
+                }
+                exact_table = {
+                    **exact_table,
+                    "D": Regular.new_exclude(exact_table["d"]),
+                    "W": Regular.new_exclude(exact_table["w"]),
+                    "S": Regular.new_exclude(exact_table["s"]),
+                    # see if there need anything more
+                }
+                exact = exact_table.get(self.s[0], Regular(exact={ord(self.s[0])}))
+            elif self.s[0] == ".":
+                exact = Regular.wildcard
+            else:
+                exact = Regular(exact={ord(self.s[0])})
+            self.s = self.s[1:].lstrip()
+        return exact
 
     def rule(self):
         head = self.name()
@@ -187,14 +222,16 @@ class Grammar:
             # that, since `p` is the only variable who can be manipulated
             # without corrupt things by now
             # using a placeholder to make thing explicit
-            self.append_action((f"_ := {self.extraction}(p)",))
-            self.extraction = None
+            self.append_action((f"_ := {self.extract}(p)",))
+            self.extract = None
             self.skip(")")
             return self.item_list()
 
-        old_prev, self.prev_item = self.prev_item, self.item()
+        # we must do `item()` first, which may cause `prev_item` refer to a
+        # different item, then save the changed reference
+        self.prev_item, old_prev = self.item(), self.prev_item
         item_list = self.item_list()
-        self.prev_item, item = old_prev, self.prev_item
+        item, self.prev_item = self.prev_item, old_prev
         return item, *item_list
 
     def append_action(self, action):
@@ -230,22 +267,22 @@ class Grammar:
 
 # misc
 varstring = """
-S -> B V;
-B -> /0/ [c := c * 2] B;
-B -> /1/ [c := c * 2 + 1] B;
-B -> / /;
-V [c > 0] -> /./ [c := c - 1] V;
+S -> B V ;
+B -> /0/ [c := c * 2] B ;
+B -> /1/ [c := c * 2 + 1] B ;
+B -> /\ / ;
+V [c > 0] -> /./ [c := c - 1] V ;
 V [c == 0] -> ;
 """
 
 dyck = """
 S -> ;
-S -> I S;
-I -> /[/ S /]/;
+S -> I S ;
+I -> /\[/ S /]/ ;
 """
 
-dyck_extraction = """
-X -> /[/ param( S ) /]/ S;
+extr_dyck = """
+X -> /\[/ param( S ) /]/ S;
 """
 
 from unittest import TestCase
@@ -259,7 +296,7 @@ class TestSpec(TestCase):
 
     def test_extraction(self):
         self.assertEqual(
-            tuple(Grammar(dyck_extraction.lstrip())),
+            tuple(Grammar(extr_dyck.lstrip())),
             (
                 ProductionRule(
                     "X",

@@ -27,8 +27,8 @@ else:
 extr_grammar = pathlib.Path(extr_grammar).read_text()
 grammar = (pathlib.Path(gram).read_text() for gram in grammar)
 
-extr_grammar = tuple(spec.grammar(extr_grammar.lstrip() + "\n"))
-grammar = sum((tuple(spec.grammar(gram.lstrip() + "\n")) for gram in grammar), start=())
+extr_grammar = tuple(spec.Grammar(extr_grammar.lstrip() + "\n"))
+grammar = sum((tuple(spec.Grammar(gram.lstrip() + "\n")) for gram in grammar), start=())
 if command == "ccfg":
     for rule in extr_grammar + grammar:
         print(rule)
