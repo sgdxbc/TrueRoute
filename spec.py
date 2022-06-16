@@ -23,6 +23,7 @@ class Grammar:
         self.extract = None
         self.regex_mode = False  # coarse-grained disable meaningless whitespace
         # in regex. consider loose restriction if necessary
+        self.case_insensitive = False
 
     def __iter__(self):
         while self.s:
@@ -129,33 +130,57 @@ class Grammar:
         return inner
 
     def regex_group(self):
-        if self.s[0] == "(":
-            self.skip("(")
-            inner = self.regex_union()
-            self.skip(")")
-            return Regular(
-                exact=inner.exact,
-                concat=inner.concat,
-                union=inner.union,
-                star=inner.star,
-                repr_str=f"({inner})",
-            )
-        return self.regex_set()
+        if self.s[0] != "(":
+            return self.regex_set()
+
+        self.skip("(")
+        if self.s[:3] == "?i:":
+            assert not self.case_insensitive
+            self.case_insensitive = True
+            self.skip("?i:")
+        inner = self.regex_union()
+        repr_str = f"({inner})" if not self.case_insensitive else f"(?i:{inner})"
+        self.case_insensitive = False
+        self.skip(")")
+        return Regular(
+            exact=inner.exact,
+            concat=inner.concat,
+            union=inner.union,
+            star=inner.star,
+            repr_str=repr_str,
+        )
 
     def regex_set(self):
-        if self.s[0] == "[":
-            self.skip("[")
+        if self.s[0] != "[":
+            return self.regex_escape()
 
-            def gen():
-                while self.s[0] != "]":
-                    yield self.regex_escape()
+        self.skip("[")
+        if self.s[0] == "^":
+            exclude = True
+            self.skip("^")
+        else:
+            exclude = False
 
-            regular = Regular.new_union(set(gen()))
-            assert regular.is_exact()
-            self.skip("]")
-            return regular
+        def gen():
+            while self.s[0] != "]":
+                char = self.regex_escape()
+                if self.s[0] != "-":
+                    yield char
+                else:
+                    assert char.is_exact() and len(char.exact) == 1
+                    self.skip("-")
+                    char_high = self.regex_escape()
+                    assert char_high.is_exact() and len(char_high.exact) == 1
+                    (low,), (high,) = char.exact, char_high.exact
+                    yield Regular(
+                        exact={byte for byte in range(low, high + 1)},
+                        repr_str=f"[{low}-{high}]",
+                    )
 
-        return self.regex_escape()
+        regular = Regular.new_union(set(gen()))
+        assert regular.is_exact()
+        self.skip("]")
+        return regular if not exclude else Regular.new_exclude(regular)
 
     def regex_escape(self):
         if self.s[:2] == "\\x":
@@ -186,6 +211,11 @@ class Grammar:
                 exact = Regular.wildcard
             else:
                 exact = Regular(exact={ord(self.s[0])})
+                if self.case_insensitive:
+                    exact = Regular(
+                        exact={ord(self.s[0].lower()), ord(self.s[0].upper())},
+                        repr_str=str(exact),  # there should be a outer repr
+                    )
             self.s = self.s[1:].lstrip()
         return exact
 
