@@ -88,8 +88,8 @@ class State:
                     byte = "..."
                 yield f"  {byte}  " + target(name_table, wildcard_target)
 
-        maxpri = self.ahead[0] if self.ahead else "nil"  # instead of "None" so
-        # it looks like intentional (or Ruby)
+        maxpri, *_ = self.ahead if self.ahead else ("nil",)  # instead of "None"
+        # so it looks like intentional (or Ruby)
         return "\n".join(
             (
                 f"state {name_table[self]} maxpri {maxpri}{decision}",
@@ -192,7 +192,7 @@ class State:
     def new_star(star, target):
         inner_target = State({State.epsilon: {target}})
         inner = State.new_regular(star, inner_target)
-        assert inner.priority == inner_target.priority
+        assert inner.ahead == inner_target.ahead
         inner_target.byte_table[State.epsilon] |= {inner}
         return inner
 

@@ -60,12 +60,12 @@ class RuleItem:
     @classmethod
     def new_nonterminal(cls, name_hint):
         id = 0
-        [name_hint, *postfix] = name_hint.split("%", maxsplit=1)
+        [name_hint, *postfix] = name_hint.split("^", maxsplit=1)
         if postfix:
             id = int(postfix[0]) + 1
-        while f"{name_hint}%{id}" in cls.nonterminal_set:
+        while f"{name_hint}^{id}" in cls.nonterminal_set:
             id += 1
-        name = f"{name_hint}%{id}"
+        name = f"{name_hint}^{id}"
         cls.nonterminal_set.add(name)
         return name
 
@@ -89,13 +89,8 @@ class RuleItem:
 
     def __eq__(self, other):
         return isinstance(other, RuleItem) and (
-            self.terminal,
-            self.nonterminal,
-            self.action,
-        ) == (
-            other.terminal,
-            other.nonterminal,
-            other.action,
+            (self.terminal, self.nonterminal, self.action)
+            == (other.terminal, other.nonterminal, other.action)
         )
 
     def is_terminal(self):
@@ -116,8 +111,8 @@ class ProductionRule:
     def __init__(self, head, guard, priority, body):
         assert isinstance(guard, dict) and all(
             isinstance(variable, str)
-            and (low is None or isinstance(low, int))
-            and (high is None or isinstance(high, int))
+            and (low is None or isinstance(low, (int, None)))
+            and (high is None or isinstance(high, (int, None)))
             for variable, (low, high) in guard.items()
         )
         assert isinstance(head, str)
@@ -145,15 +140,8 @@ class ProductionRule:
 
     def __eq__(self, other):
         return isinstance(other, ProductionRule) and (
-            self.head,
-            self.guard,
-            self.priority,
-            self.body,
-        ) == (
-            other.head,
-            other.guard,
-            other.priority,
-            other.body,
+            (self.head, self.guard, self.priority, self.body)
+            == (other.head, other.guard, other.priority, other.body)
         )
 
     def is_terminating(self):

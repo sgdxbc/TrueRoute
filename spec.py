@@ -2,150 +2,174 @@
 spec.py: Frontend of Counting Context Free Grammar, the grammar of protocol and
 extraction specifications.
 
-The main interface is `grammar(s)`, which accept a string of specification text.
+The main interface is `Grammar(s)`, which accept a string of specification text.
 The string `s` must start with meaningful character including comment head, i.e.
 be `lstrip`ed. It also must end with at least one new line.
 
-`grammar` returns a generator of `ProductionRule`. Wrap it into `tuple()` in 
+`Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in 
 order to pass into `crg.grammar`.
 """
 from string import ascii_letters, digits
 from crg import ProductionRule, RuleItem, Regular, compose_action
 
 
-def name(s):
-    assert s[0] in ascii_letters + "_", f"expect name: {s.splitlines()[0]}"
-    for i in range(1, len(s)):
-        if s[i] not in ascii_letters + digits + "_":
-            break
-    return s[:i], s[i:].lstrip()
+# you should put recusive descent as my epitaph
+class Grammar:
+    def __init__(self, s):
+        self.s = s
+        # maintain line number or something for a better error reporting
 
+        self.prev_item = None
+        self.extract = None
 
-def skip(s, pattern):
-    assert s.startswith(pattern)
-    return None, s[len(pattern) :].lstrip()
-
-
-def bracket(s):
-    assert s[0] == "["
-    # there should not be any possible nested bracket i guess...
-    raw, s = s[1:].split("]", maxsplit=1)
-    return (part.strip() for part in raw.split(";")), s.lstrip()
-
-
-def regex(s):
-    assert s[0] == "/"
-    for i in range(1, len(s)):
-        if s[i] == "/" and s[i - 1] != "\\":
-            return s[1:i], s[i + 1 :].lstrip()
-    assert False, "unclosed regex"
-
-
-def unsigned(s):
-    assert s[0] in digits
-    for i in range(1, len(s)):
-        if s[i] not in digits:
-            break
-    return int(s[:i]), s[i:].lstrip()
-
-
-def guard(s):
-    if ">=" in s:
-        [variable, low] = s.split(">=")
-        return variable.strip(), (int(low), None)
-    if "<=" in s:
-        [variable, inclusive_high] = s.split("<=")
-        return variable.strip(), (None, int(inclusive_high) + 1)
-    if "==" in s:  # why not just =
-        [variable, low] = s.split("==")
-        return variable.strip(), (int(low), int(low) + 1)
-    if ">" in s:
-        [variable, exclusive_low] = s.split(">")
-        return variable.strip(), (int(exclusive_low) + 1, None)
-    if "<" in s:
-        [variable, high] = s.split("<")
-        return variable.strip(), (None, high)
-    assert False, f"unsupport guard {s}"
-
-
-def rule(s):
-    head, s = name(s)
-    rule_guard = {}
-    priority = ProductionRule.default_priority
-    if s[0] == "[":
-        guard_list, s = bracket(s)
-        for part in guard_list:
-            variable, bound = guard(part)
-            assert variable not in rule_guard  # TODO support merging
-            rule_guard[variable] = bound
-    if s[0] in digits:
-        priority, s = unsigned(s)
-    _, s = skip(s, "->")
-
-    item_list = []
-
-    def append_action(action):
-        if not item_list:
-            item_list.append(RuleItem(terminal=Regular.epsilon))
-        item_list[-1] = RuleItem(
-            terminal=item_list[-1].terminal,
-            nonterminal=item_list[-1].nonterminal,
-            action=compose_action(item_list[-1].action, action),
-        )
-
-    extraction_action = None
-    while s[0] != ";":
-        if s[0] == "/":
-            terminal, s = regex(s)
-            # TODO
-            if terminal == "":
-                terminal = Regular.epsilon
-            elif terminal == ".":
-                terminal = Regular.wildcard
+    def __iter__(self):
+        while self.s:
+            if self.s[0] == "#":
+                self.s = self.s.split("\n", maxsplit=1)[1].lstrip()
             else:
-                terminal = Regular.new_literal(bytes(terminal, "utf-8"))
-            item_list += [RuleItem(terminal=terminal)]
-        elif s[0] in ascii_letters + "_":
-            name_str, s = name(s)
-            if s[0] == "(":
-                append_action(("p := pos()",))
-                extraction_action = name_str
-                _, s = skip(s, "(")
-            else:
-                item_list += [RuleItem(nonterminal=name_str)]
-        elif s[0] == "[":
-            assert not item_list or not item_list[-1].action, "double action"
-            action_list, s = bracket(s)
-            append_action(tuple(action_list))
-        elif s[0] == ")" and extraction_action:
-            assert item_list
+                yield self.rule()
+
+    def name(self):
+        assert (
+            self.s[0] in ascii_letters + "_"
+        ), f"expect name: {self.s.splitlines()[0]}"
+        for i in range(1, len(self.s)):
+            if self.s[i] not in ascii_letters + digits + "_":
+                break
+        name, self.s = self.s[:i], self.s[i:].lstrip()
+        return name
+
+    def skip(self, pattern):
+        assert self.s.startswith(pattern)
+        self.s = self.s[len(pattern) :].lstrip()
+
+    def bracket(self):
+        self.skip("[")
+        # there should not be any possible nested bracket i guess...
+        raw, s = self.s[1:].split("]", maxsplit=1)
+        self.s = s.lstrip()
+        for part in raw.split(";"):
+            yield part.strip()
+
+    def regex(self):
+        self.skip("/")
+        regular = self.regex_union()
+        self.skip("/")
+        return regular
+
+    def unsigned(self):
+        assert self.s[0] in digits
+        for i in range(1, len(self.s)):
+            if self.s[i] not in digits:
+                break
+        u, self.s = int(self.s[:i]), self.s[i:].lstrip()
+        return u
+
+    @staticmethod
+    def guard(s):
+        if ">=" in s:
+            [variable, low] = s.split(">=")
+            return variable.strip(), (int(low), None)
+        if "<=" in s:
+            [variable, inclusive_high] = s.split("<=")
+            return variable.strip(), (None, int(inclusive_high) + 1)
+        if "==" in s:  # why not just =
+            [variable, low] = s.split("==")
+            return variable.strip(), (int(low), int(low) + 1)
+        if ">" in s:
+            [variable, exclusive_low] = s.split(">")
+            return variable.strip(), (int(exclusive_low) + 1, None)
+        if "<" in s:
+            [variable, high] = s.split("<")
+            return variable.strip(), (None, high)
+        assert False, f"unsupport guard {s}"
+
+    def regex_union(self):
+        def gen():
+            while self.s != "/":
+                yield self.regex_concat()
+                if self.s == "|":
+                    self.skip("|")
+
+        return Regular.new_union(set(gen()))
+
+    def regex_concat(self):
+        def gen():
+            while self.s[0] not in {"|", "/"}:
+                yield self.regex_postfix()
+
+        return Regular(concat=tuple(gen()))
+
+    def rule(self):
+        head = self.name()
+        guard = {}
+        priority = ProductionRule.default_priority
+        if self.s[0] == "[":
+            # TODO merge guard on same variable instead of override
+            guard = {
+                variable: bound
+                for variable, bound in (guard(part) for part in self.bracket())
+            }
+        if self.s[0] in digits:
+            priority = self.unsigned()
+        self.skip("->")
+        self.prev_item = RuleItem(terminal=Regular.epsilon)
+        rule = ProductionRule(head, guard, priority, self.item_list())
+        self.prev_item = None
+        return rule
+
+    def item_list(self):
+        if self.s[0] == ";":
+            assert self.extract is None
+            self.skip(";")
+            return ()
+        if self.s[0] == ")":
+            assert self.extract is not None
             # i don't fully understand the reason to assign a possible-null
             # value returned by custom extraction action back into `p`
             # i guess the semantic requires there must be an assignment cause
             # that, since `p` is the only variable who can be manipulated
             # without corrupt things by now
             # using a placeholder to make thing explicit
-            append_action((f"_ := {extraction_action}(p)",))
-            extraction_action = None
-            _, s = skip(s, ")")
-        else:
-            # consider presever the whole line for a better report
-            assert False, f"unexpected {s.splitlines()[0]}"
-    item_list = tuple(item_list)
-    if not item_list:
-        item_list = (RuleItem(terminal=Regular.epsilon),)
-    _, s = skip(s, ";")
-    return ProductionRule(head, rule_guard, priority, item_list), s
+            self.append_action((f"_ := {self.extraction}(p)",))
+            self.extraction = None
+            self.skip(")")
+            return self.item_list()
 
+        old_prev, self.prev_item = self.prev_item, self.item()
+        item_list = self.item_list()
+        self.prev_item, item = old_prev, self.prev_item
+        return item, *item_list
 
-def grammar(s):
-    while s:
-        if s[0] == "#":
-            [_, s] = s.split("\n", maxsplit=1)
-            s = s.lstrip()
+    def append_action(self, action):
+        assert self.prev_item is not None
+        self.prev_item = RuleItem(
+            terminal=self.prev_item.terminal,
+            nonterminal=self.prev_item.nonterminal,
+            action=compose_action(self.prev_item.action, action),
+        )
+
+    def item(self):
+        if self.s[0] == "/":
+            terminal, nonterminal = self.regex(), None
+        elif self.s[0] in ascii_letters + "_":
+            name = self.name()
+            if self.s[0] == "(":
+                self.append_action(("p := pos()",))
+                self.extract = name
+                self.skip("(")
+                return self.item()  # assert at least one item remain (and in
+                # the extracting paren)
+            else:
+                nonterminal, terminal = name, None
         else:
-            decl, s = rule(s)
-            yield decl
+            assert (
+                False
+            ), f"expect terminal/nonterminal/extract: {self.s.splitlines()[0]}"
+        action = ()
+        if self.s[0] == "[":
+            action = tuple(self.bracket())  # TODO
+        return RuleItem(terminal=terminal, nonterminal=nonterminal, action=action)
 
 
 # misc
@@ -174,12 +198,12 @@ from crg import varstring as varstring_grammar, dyck as dyck_grammar
 
 class TestSpec(TestCase):
     def test_grammar(self):
-        self.assertEqual(tuple(grammar(varstring.lstrip())), varstring_grammar)
-        self.assertEqual(tuple(grammar(dyck.lstrip())), dyck_grammar)
+        self.assertEqual(tuple(Grammar(varstring.lstrip())), varstring_grammar)
+        self.assertEqual(tuple(Grammar(dyck.lstrip())), dyck_grammar)
 
     def test_extraction(self):
         self.assertEqual(
-            tuple(grammar(dyck_extraction.lstrip())),
+            tuple(Grammar(dyck_extraction.lstrip())),
             (
                 ProductionRule(
                     "X",
