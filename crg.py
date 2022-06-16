@@ -863,6 +863,9 @@ class TestCRG(TestCase):
 
 
 def guard_str(guard):
+    if not guard:
+        return "true"
+
     def bound_str(bound):
         low, high = bound
         low = str(low) if low is not None else ""

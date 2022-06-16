@@ -49,15 +49,22 @@ if command == "crg":
 
 if command == "ca":
     for source, config_list in gen.relevant(tuple(grammar)):
-        for guard, transition_list in config_list:
-            guard = f" if {crg.guard_str(guard)}" if guard else ""
+        config_list = tuple(
+            (guard, tuple(transition_list)) for guard, transition_list in config_list
+        )
+        relevant_set = set(transition_list for _, transition_list in config_list)
+        for transition_list in relevant_set:
+            print(f"from {source}")
+            for guard, trans in config_list:
+                if trans != transition_list:
+                    continue
+                print(f"if {crg.guard_str(guard)}")
             state = lpdfa.construct(tuple(transition_list))
             reachable = state.reachable() - {state}
             name_table = {
                 state: "s",
                 **{s: str(i + 1) for i, s in enumerate(reachable)},
             }
-            print(f"from {source}{guard}")
             for state in (state, *reachable):
                 print(
                     "\n".join(
@@ -65,6 +72,6 @@ if command == "ca":
                         for line in state.format_str(name_table).splitlines()
                     )
                 )
-
+    sys.exit()
 
 print("gen: work in progress")

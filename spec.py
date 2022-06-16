@@ -7,7 +7,7 @@ The string `s` must start with meaningful character including comment head, i.e.
 be `lstrip`ed. It also must end with at least one new line.
 
 `Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in 
-order to pass into `crg.grammar`.
+order to pass into `crg.optimize`.
 """
 from string import ascii_letters, digits, whitespace
 from crg import ProductionRule, RuleItem, Regular, compose_action
