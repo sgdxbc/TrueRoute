@@ -5,23 +5,20 @@ import sys
 import pathlib
 import spec
 import crg
+import lpdfa
 
 assert __name__ == "__main__"
 
-if len(sys.argv) >= 3 and sys.argv[1] == "ccfg":
+if len(sys.argv) >= 3 and sys.argv[1] in {"ccfg", "crg", "ca"}:
+    command = sys.argv[1]
     extr_grammar = sys.argv[2]
     grammar = sys.argv[3:]
-    command = "ccfg"
-elif len(sys.argv) >= 3 and sys.argv[1] == "crg":
-    extr_grammar = sys.argv[2]
-    grammar = sys.argv[3:]
-    command = "crg"
 elif len(sys.argv) >= 2:
+    command = "gen"
     extr_grammar = sys.argv[1]
     grammar = sys.argv[2:]
-    command = "ca"
 else:
-    print("usage: cli.py [ccfg | crg] {extraction spec.} [protocol spec. ...]")
+    print("usage: cli.py [ccfg | crg | ca] {extraction spec.} [protocol spec. ...]")
     sys.exit()
 
 extr_grammar = pathlib.Path(extr_grammar).read_text()
@@ -53,4 +50,24 @@ if command == "crg":
                 )
     sys.exit()
 
-print("ca: work in progress")
+if command == "ca":
+    for source, config_list in grammar:
+        for guard, transition_list in config_list:
+            guard = f" if {crg.guard_str(guard)}" if guard else ""
+            state = lpdfa.construct(tuple(transition_list))
+            reachable = state.reachable() - {state}
+            name_table = {
+                state: "s",
+                **{s: str(i + 1) for i, s in enumerate(reachable)},
+            }
+            print(f"from {source}{guard}")
+            for state in (state, *reachable):
+                print(
+                    "\n".join(
+                        f"  {line}"
+                        for line in state.format_str(name_table).splitlines()
+                    )
+                )
+
+
+print("gen: work in progress")
