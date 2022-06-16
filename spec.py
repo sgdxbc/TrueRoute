@@ -84,9 +84,12 @@ class Grammar:
             return variable.strip(), (None, high)
         assert False, f"unsupport guard {s}"
 
+    # operator prcedence following POSIX extended regular expression syntax
+    # https://www.boost.org/doc/libs/1_79_0/libs/regex/doc/html/boost_regex/syntax/basic_extended.html#boost_regex.syntax.basic_extended.operator_precedence
+    # skipped unsupported collation-related bracket symbols and anchoring
     def regex_union(self):
         def gen():
-            while self.s != "/":
+            while self.s[0] not in {"/", ")"}:
                 yield self.regex_concat()
                 if self.s == "|":
                     self.skip("|")
@@ -95,10 +98,61 @@ class Grammar:
 
     def regex_concat(self):
         def gen():
-            while self.s[0] not in {"|", "/"}:
+            while self.s[0] not in {"|", "/", ")"}:
                 yield self.regex_postfix()
 
-        return Regular(concat=tuple(gen()))
+        concat = tuple(gen())
+        assert concat  # epsilon is handled in union
+        if len(concat) == 1:
+            return concat[0]
+        return Regular(concat=concat)
+
+    def regex_postfix(self):
+        inner = self.regex_group()
+        if self.s[0] == "*":
+            self.skip("*")
+            return Regular(star=inner)
+        if self.s[0] == "+":
+            self.skip("+")
+            return Regular(concat=(inner, Regular(star=inner)))
+        if self.s[0] == "?":
+            self.skip("?")
+            return Regular.new_union({inner, Regular.epsilon})
+        return inner
+
+    def regex_group(self):
+        if self.s[0] == "(":
+            self.skip("(")
+            inner = self.regex_union()
+            self.skip(")")
+            return inner
+        return self.regex_set()
+
+    def regex_set(self):
+        if self.s[0] == "[":
+            self.skip("[")
+
+            def gen():
+                while self.s[0] != "]":
+                    yield self.regex_escape()
+
+            regular = Regular.new_union(set(gen()))
+            assert regular.is_exact()
+            self.skip("]")
+            return regular
+
+        return self.regex_escape()
+
+    def regex_escape(self):
+        if self.s[:2] == "\\x":
+            self.skip("\\x")
+            exact = self.unsigned()
+        else:
+            if self.s[0] == "\\":
+                self.skip("\\")
+                # TODO
+            exact, self.s = ord(self.s[0]), self.s[1:].lstrip()
+        return Regular(exact={exact})
 
     def rule(self):
         head = self.name()
@@ -108,15 +162,17 @@ class Grammar:
             # TODO merge guard on same variable instead of override
             guard = {
                 variable: bound
-                for variable, bound in (guard(part) for part in self.bracket())
+                for variable, bound in (Grammar.guard(part) for part in self.bracket())
             }
         if self.s[0] in digits:
             priority = self.unsigned()
         self.skip("->")
         self.prev_item = RuleItem(terminal=Regular.epsilon)
-        rule = ProductionRule(head, guard, priority, self.item_list())
+        item_list = self.item_list()
+        if self.prev_item.action or not item_list:
+            item_list = (self.prev_item, *item_list)
         self.prev_item = None
-        return rule
+        return ProductionRule(head, guard, priority, item_list)
 
     def item_list(self):
         if self.s[0] == ";":

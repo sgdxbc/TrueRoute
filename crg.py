@@ -657,10 +657,8 @@ class Regular:
 
     @staticmethod
     def new_union(variant_set):
-        assert variant_set
-        if len(variant_set) == 1:
-            (variant,) = variant_set
-            return variant
+        if not variant_set:
+            return Regular.epsilon
 
         union_varaint = set(
             inner_variant
@@ -687,9 +685,9 @@ class Regular:
             for variant in variant_set
             if not variant.is_union() and not variant.is_exact()
         )
-        return Regular(union=union_varaint | exact_variant | other_variant)
-        # assert at least one of above is not empty
-        # (will be asserted in __init__)
+        union = union_varaint | exact_variant | other_variant
+        assert union
+        return Regular(union=union) if len(union) > 1 else max(union)
 
     def __str__(self):
         if self.repr_str:
