@@ -22,8 +22,8 @@ else:
     print("usage: cli.py [ccfg | crg | ca] {extraction spec.} [protocol spec. ...]")
     sys.exit()
 
-extr_grammar = pathlib.Path(extr_grammar).read_text()
-grammar = (pathlib.Path(gram).read_text() for gram in grammar)
+extr_grammar = pathlib.Path(extr_grammar).read_text(encoding="utf-8")
+grammar = (pathlib.Path(gram).read_text(encoding="utf-8") for gram in grammar)
 
 extr_grammar = tuple(spec.Grammar(extr_grammar.lstrip() + "\n"))
 grammar = sum((tuple(spec.Grammar(gram.lstrip() + "\n")) for gram in grammar), start=())

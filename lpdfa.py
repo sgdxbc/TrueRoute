@@ -2,7 +2,7 @@
 lpdfa.py: Labeled Priority Deterministic Finite Automata implementation.
 
 The main interface is `construct(transition_list)`, which accept a generator of
-"headless" CA transition, i.e. the 4-tuple (priority, regular, action, target 
+"headless" CA transition, i.e. the 4-tuple (priority, regular, action, target
 state). The function then construct these transitions into LPDFA.
 
 The `construct` function returns the initial `State` of the LPDFA. The important
@@ -325,7 +325,7 @@ class TestLPDFA(TestCase):
         self.assertTrue(s0acc.is_accepted())
         sacc = s0acc.as_deterministic()[0]
         self.assertTrue(sacc.is_accepted())
-        self.assertEqual(s1.reachable(), {s1: 0, s0acc: 1, sacc: 2})
+        self.assertEqual(tuple(s1.reachable()), (s1, s0acc, sacc))
 
         q2 = State({State.epsilon: {q1}})
         q3 = State({3: {q2}})
@@ -333,7 +333,7 @@ class TestLPDFA(TestCase):
         s12 = s3.as_deterministic()[3]
         s0acc = s12.as_deterministic()[1]
         sacc = s0acc.as_deterministic()[0]
-        self.assertEqual(s3.reachable(), {s3: 0, s12: 1, s0acc: 2, sacc: 3})
+        self.assertEqual(tuple(s3.reachable()), (s3, s12, s0acc, sacc))
 
         # TODO write some real test cases
 

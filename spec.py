@@ -6,7 +6,7 @@ The main interface is `Grammar(s)`, which accept a string of specification text.
 The string `s` must start with meaningful character including comment head, i.e.
 be `lstrip`ed. It also must end with at least one new line.
 
-`Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in 
+`Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in
 order to pass into `crg.optimize`.
 """
 from string import ascii_letters, digits, whitespace
@@ -173,8 +173,7 @@ class Grammar:
                     assert char_high.is_exact() and len(char_high.exact) == 1
                     (low,), (high,) = char.exact, char_high.exact
                     yield Regular(
-                        exact={byte for byte in range(low, high + 1)},
-                        repr_str=f"[{low}-{high}]",
+                        exact=set(range(low, high + 1)), repr_str=f"[{low}-{high}]"
                     )
 
         regular = Regular.new_union(set(gen()))
@@ -225,10 +224,7 @@ class Grammar:
         priority = ProductionRule.default_priority
         if self.s[0] == "[":
             # TODO merge guard on same variable instead of override
-            guard = {
-                variable: bound
-                for variable, bound in (Grammar.guard(part) for part in self.bracket())
-            }
+            guard = dict(Grammar.guard(part) for part in self.bracket())
         if self.s[0] in digits:
             priority = self.unsigned()
         self.skip("->")
@@ -283,8 +279,8 @@ class Grammar:
                 self.skip("(")
                 return self.item()  # assert at least one item remain (and in
                 # the extracting paren)
-            else:
-                nonterminal, terminal = name, None
+
+            nonterminal, terminal = name, None
         else:
             assert (
                 False
@@ -296,7 +292,7 @@ class Grammar:
 
 
 # misc
-varstring = """
+varstring = r"""
 S -> B V ;
 B -> /0/ [c := c * 2] B ;
 B -> /1/ [c := c * 2 + 1] B ;
@@ -305,13 +301,13 @@ V [c > 0] -> /./ [c := c - 1] V ;
 V [c == 0] -> ;
 """
 
-dyck = """
+dyck = r"""
 S -> ;
 S -> I S ;
 I -> /\[/ S /]/ ;
 """
 
-extr_dyck = """
+extr_dyck = r"""
 X -> /\[/ param( S ) /]/ S;
 """
 

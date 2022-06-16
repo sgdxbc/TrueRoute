@@ -106,8 +106,8 @@ class ProductionRule:
     def __init__(self, head, guard, priority, body):
         assert isinstance(guard, dict) and all(
             isinstance(variable, str)
-            and (low is None or isinstance(low, (int, None)))
-            and (high is None or isinstance(high, (int, None)))
+            and (low is None or isinstance(low, int))
+            and (high is None or isinstance(high, int))
             for variable, (low, high) in guard.items()
         )
         assert isinstance(head, str)
@@ -706,7 +706,7 @@ def compose_action(action, another_action):
     return action + another_action
 
 
-## tests, cli and shared assets
+# tests, cli and shared assets
 
 symbol_b = RuleItem(nonterminal="B")
 symbol_v = RuleItem(nonterminal="V")
