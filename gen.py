@@ -89,7 +89,7 @@ def split_guard(transition_list):
         yield from split_gen
 
     for _, guard, *rest in transition_list:
-        yield set(frozenset(splitted.items()) for splitted in split(guard)), tuple(rest)
+        yield tuple(rest), set(frozenset(splitted.items()) for splitted in split(guard))
 
 
 def relevant(transition_list):
@@ -97,7 +97,8 @@ def relevant(transition_list):
 
     assert sys.version_info >= (3, 7)  # for ordered dict implementation
     for source in dict.fromkeys(source for source, *_ in transition_list):
-        split_list = tuple(
+        # {rest => guard set}, where guard sets may intersect with each other
+        split_table = dict(
             split_guard(
                 tuple(
                     transition
@@ -106,13 +107,24 @@ def relevant(transition_list):
                 )
             )
         )
-        guard_set = set(guard for split_set, _ in split_list for guard in split_set)
+        guard_set = {guard for split_set in split_table.values() for guard in split_set}
+
+        # a set of [rest], each [rest] is enabled by either one guard of a guard
+        # set, and each guard set does not intersect with others
+        relevant_set = {
+            tuple(rest for rest, split_set in split_table.items() if guard in split_set)
+            for guard in guard_set
+        }
         yield source, (
             (
-                dict(guard),
-                (rest for split_set, rest in split_list if guard in split_set),
+                (
+                    dict(guard)
+                    for guard in guard_set
+                    if all(guard in split_table[rest] for rest in rest_list)
+                ),
+                rest_list,
             )
-            for guard in guard_set
+            for rest_list in relevant_set
         )
 
 
@@ -124,27 +136,3 @@ def serialize(transition_list):
     )
     yield len(state_list)
     state_table = {name: i + 1 for i, name in enumerate(state_list)}
-
-
-# misc
-from unittest import TestCase
-
-
-class TestGen(TestCase):
-    def test_split_guard(self):
-        self.assertEqual(tuple(split_guard(())), ())
-        for guard in ({}, {"x": (0, 1)}, {"x": (0, 1), "y": (0, 1)}):
-            with self.subTest(guard=guard):
-                self.assertEqual(
-                    tuple(split_guard((("S", guard),))),
-                    (({frozenset(guard.items())}, ()),),
-                )
-
-        x01, x02, x12 = {"x": (0, 1)}, {"x": (0, 2)}, {"x": (1, 2)}
-        self.assertEqual(
-            tuple(split_guard((("S", x01, "0..1"), ("S", x02, "0..2")))),
-            (
-                ({frozenset(x01.items())}, ("0..1",)),
-                ({frozenset(x01.items()), frozenset(x12.items())}, ("0..2",)),
-            ),
-        )

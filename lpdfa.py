@@ -305,54 +305,24 @@ def construct(transition_list):
     ).powerset()
 
 
-# misc
-from unittest import TestCase
+def format_str(state):
+    def gen():
+        reachable = tuple(state.reachable())
+        name_table = {s: str(i) if i != 0 else "s" for i, s in enumerate(reachable)}
+        for s in reachable:
+            yield s.format_str(name_table)
 
+    return "\n".join(gen())
 
-class TestLPDFA(TestCase):
-    def test_powerset(self):
-        qacc = State({}, decision=(1, None, "done"))
-        q0 = State({0: {qacc}})
-        s0 = q0.powerset()
-        self.assertEqual(s0.ahead, (1, None, "done"))
-        sacc = s0.as_deterministic()[0]
-        self.assertTrue(sacc.is_accepted())
-        self.assertFalse(sacc.byte_table)
-
-        q1 = State({1: {q0, qacc}})
-        s1 = q1.powerset()
-        s0acc = s1.as_deterministic()[1]
-        self.assertTrue(s0acc.is_accepted())
-        sacc = s0acc.as_deterministic()[0]
-        self.assertTrue(sacc.is_accepted())
-        self.assertEqual(tuple(s1.reachable()), (s1, s0acc, sacc))
-
-        q2 = State({State.epsilon: {q1}})
-        q3 = State({3: {q2}})
-        s3 = q3.powerset()
-        s12 = s3.as_deterministic()[3]
-        s0acc = s12.as_deterministic()[1]
-        sacc = s0acc.as_deterministic()[0]
-        self.assertEqual(tuple(s3.reachable()), (s3, s12, s0acc, sacc))
-
-        # TODO write some real test cases
-
-
-from crg import optimize, dyck, extr_dyck, guard_str
-from gen import relevant
 
 if __name__ == "__main__":
+    from crg import optimize, dyck, extr_dyck, guard_str
+    from gen import relevant
+
     for source, config_list in relevant(tuple(optimize(dyck, extr_dyck))):
-        for guard, transition_list in config_list:
-            guard = f" if {guard_str(guard)}" if guard else ""
-            state = construct(tuple(transition_list))
-            reachable = tuple(state.reachable())
-            name_table = {s: str(i) for i, s in enumerate(reachable)}
-            print(f"from {source}{guard}")
-            for state in reachable:
-                print(
-                    "\n".join(
-                        f"  {line}"
-                        for line in state.format_str(name_table).splitlines()
-                    )
-                )
+        for guard_gen, transition_list in config_list:
+            print(f"from {source}")
+            for guard in guard_gen:
+                print(f"  if {guard_str(guard)}")
+            for line in format_str(construct(tuple(transition_list))).splitlines():
+                print(f"  {line}")

@@ -34,44 +34,19 @@ if command == "ccfg":
 
 grammar = crg.optimize(grammar, extr_grammar)
 if command == "crg":
-    print(
-        "{:20}{:20}{:4}{:30}{:26}{}".format(
-            "Source", "Guard", "Pri", "Regular", "Action", "Target"
-        )
-    )
-    for source, guard, priority, regular, action, target in grammar:
-        guard = crg.guard_str(guard) if guard else ""
-        action = crg.action_str(action) if action else ""
-        target = target or "(accept)"
-        regular = str(regular)
-        print(f"{source:20}{guard:20}{priority:<4}{regular:30}{action:26}{target}")
+    print(crg.format_str(grammar))
     sys.exit()
 
 if command == "ca":
     for source, config_list in gen.relevant(tuple(grammar)):
-        config_list = tuple(
-            (guard, tuple(transition_list)) for guard, transition_list in config_list
-        )
-        relevant_set = set(transition_list for _, transition_list in config_list)
-        for transition_list in relevant_set:
+        for guard_gen, transition_list in config_list:
             print(f"from {source}")
-            for guard, trans in config_list:
-                if trans != transition_list:
-                    continue
-                print(f"if {crg.guard_str(guard)}")
-            state = lpdfa.construct(tuple(transition_list))
-            reachable = state.reachable() - {state}
-            name_table = {
-                state: "s",
-                **{s: str(i + 1) for i, s in enumerate(reachable)},
-            }
-            for state in (state, *reachable):
-                print(
-                    "\n".join(
-                        f"  {line}"
-                        for line in state.format_str(name_table).splitlines()
-                    )
-                )
+            for guard in guard_gen:
+                print(f"  if {crg.guard_str(guard)}")
+            for line in lpdfa.format_str(
+                lpdfa.construct(tuple(transition_list))
+            ).splitlines():
+                print(f"  {line}")
     sys.exit()
 
 print("gen: work in progress")

@@ -708,6 +708,28 @@ def compose_action(action, another_action):
 
 # tests, cli and shared assets
 
+
+def guard_str(guard):
+    if not guard:
+        return "true"
+
+    def bound_str(bound):
+        low, high = bound
+        low = str(low) if low is not None else ""
+        high = str(high) if high is not None else ""
+        return f"{low}..{high}"
+
+    return "; ".join(
+        f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
+    )
+
+
+def action_str(action):
+    return "; ".join(str(step) for step in action)
+
+
+# shared asset for tests and main
+
 symbol_b = RuleItem(nonterminal="B")
 symbol_v = RuleItem(nonterminal="V")
 varstring = (
@@ -787,119 +809,34 @@ extr_dyck = (
         {},
         ProductionRule.default_priority,
         (
-            RuleItem(terminal=Regular.new_literal(b"[")),
-            RuleItem(nonterminal="S", action=("param",)),
+            RuleItem(terminal=Regular.new_literal(b"["), action=("p := pos()",)),
+            RuleItem(nonterminal="S", action=("_ := param(p)",)),
             RuleItem(terminal=Regular.new_literal(b"]")),
             RuleItem(nonterminal="S"),
         ),
     ),
 )
 
-from unittest import TestCase
 
-
-class TestCRG(TestCase):
-    def test_is_regular(self):
-        self.assertFalse(varstring[0].is_triple())
-        for rule in varstring[1:]:
-            with self.subTest(rule=str(rule)):
-                self.assertTrue(rule.is_triple())
-        self.assertTrue(varstring[1].is_nonterminating())
-        self.assertTrue(varstring[2].is_nonterminating())
-        self.assertTrue(varstring[3].is_terminating())
-        self.assertTrue(varstring[4].is_nonterminating())
-        self.assertTrue(varstring[5].is_terminating())
-
-        self.assertTrue(dyck[0].is_terminating())
-        self.assertFalse(dyck[1].is_triple())
-        self.assertFalse(dyck[2].is_triple())
-
-    def test_reachable(self):
-        self.assertEqual(reachable_table(()), {})
-        self.assertEqual(
-            reachable_table(varstring), {"S": {"B", "V"}, "B": set(), "V": set()}
+def format_str(transition_list):
+    def gen():
+        # the field width is designed for 80 width terminal, only keep toy
+        # transitions in mind
+        # real world transitions are too complex to be printed nicely
+        yield "{:8}{:24}{:4}{:12}{:24}{:8}".format(
+            "Source", "Guard", "Pri", "Regular", "Action", "Target"
         )
-        self.assertEqual(reachable_table(dyck), {"S": {"I"}, "I": {"S"}})
-        self.assertEqual(reachable_table(extr_dyck + dyck)["X"], {"S", "I"})
+        for source, guard, priority, regular, action, target in transition_list:
+            target = target or "(accept)"
+            yield (
+                f"{source:8}{guard_str(guard):24}{priority:<4}"
+                f"{str(regular):12}{action_str(action):24}{target:8}"
+            )
 
-    def test_subgrammar(self):
-        self.assertEqual(subgrammar_table(()), {})
-        subgrammar = subgrammar_table(varstring)
-        self.assertEqual(subgrammar["S"], varstring)
-        self.assertEqual(subgrammar["B"], varstring[1:4])
-        self.assertEqual(subgrammar["V"], varstring[4:])
-        self.assertEqual(subgrammar_table(dyck)["S"], dyck)
-
-    def test_normal(self):
-        self.assertEqual(normal_set(()), set())
-        self.assertEqual(normal_set(varstring), {"S", "B", "V"})
-        self.assertEqual(normal_set(dyck), set())
-
-    def test_first(self):
-        self.assertEqual(first_table(()), {})
-        self.assertEqual(
-            first_table(varstring),
-            {
-                "S": {
-                    Regular.new_literal(b"0"),
-                    Regular.new_literal(b"1"),
-                    Regular.new_literal(b" "),
-                },
-                "B": {
-                    Regular.new_literal(b"0"),
-                    Regular.new_literal(b"1"),
-                    Regular.new_literal(b" "),
-                },
-                "V": {Regular.wildcard, Regular.epsilon},
-            },
-        )
-        self.assertEqual(
-            first_table(dyck),
-            {
-                "S": {Regular.new_literal(b"["), Regular.epsilon},
-                "I": {Regular.new_literal(b"[")},
-            },
-        )
-
-
-def guard_str(guard):
-    if not guard:
-        return "true"
-
-    def bound_str(bound):
-        low, high = bound
-        low = str(low) if low is not None else ""
-        high = str(high) if high is not None else ""
-        return f"{low}..{high}"
-
-    return "; ".join(
-        f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
-    )
-
-
-def action_str(action):
-    return "; ".join(str(step) for step in action)
+    return "\n".join(gen())
 
 
 if __name__ == "__main__":
-    print(
-        "{:14}{:20}{:4}{:20}{:20}{}".format(
-            "Source", "Guard", "Pri", "Regular", "Action", "Target"
-        )
-    )
-
-    for source, guard, priority, regular, action, target in optimize(
-        varstring, extr_varstring
-    ):
-        target = target or "(accept)"
-        print(
-            f"{source:14}{guard_str(guard):20}{priority:<4}{str(regular):20}{action_str(action):20}{target}"
-        )
+    print(format_str(optimize(varstring, extr_varstring)))
     print()
-
-    for source, guard, priority, regular, action, target in optimize(dyck, extr_dyck):
-        target = target or "(accept)"
-        print(
-            f"{source:14}{guard_str(guard):20}{priority:<4}{str(regular):20}{action_str(action):20}{target}"
-        )
-    print()
+    print(format_str(optimize(dyck, extr_dyck)))
