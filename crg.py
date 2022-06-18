@@ -111,7 +111,7 @@ class ProductionRule:
             for variable, (low, high) in guard.items()
         )
         assert isinstance(head, str)
-        assert isinstance(priority, int)
+        assert isinstance(priority, int) and priority > 0
         # do not accept empty production rule
         # epsilon should be considered as a special terminal symbol since we are
         # already use regex as terminal
@@ -436,7 +436,7 @@ def approx(grammar):
             # byte, using wildcard accompanied by low priority should be
             # effectively equivalent, while still support `start` and `stop` to
             # contain complex regular. so why not
-            ProductionRule.default_priority // 2,
+            (ProductionRule.default_priority + 1) // 2,
             (RuleItem(terminal=Regular.wildcard), approx_item),
         ),
     )
@@ -458,8 +458,10 @@ def eliminate_idle(grammar):
                 yield ProductionRule(
                     rule.head,
                     merge_predicate(rule.guard, inline_rule.guard),
+                    # both rule has at least 1 priority, so new priority will be
+                    # at least 2 // 2 = 1
                     (rule.priority + inline_rule.priority) // 2,
-                    # omit composing action in this implementation
+                    # compare to paper, this impl omit action composing
                     # we have asserted there is no action above
                     inline_rule.body,
                 )

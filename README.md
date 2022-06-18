@@ -7,12 +7,13 @@ Developed with Python 3.10.5, but should work on many recent versions.
 **Compare to [MSU-SSL/FlowSifter](https://github.com/MSU-SSL/FlowSifter).**
 ||FlowShifter|TrueRoute|
 |-|-|-|
-|Language       |OCaml          |Python + C     |
-|Deploy/dev platform|Unknown    |Linux          |
-|CCRG frontend  |Yes            |Yes            |
-|Simulate       |Yes with OCaml |Yes with C     |
-|Compile        |Yes            |No             |
-|Serializable   |No<sup>[2]</sup>|Yes           |
+|Language               |OCaml          |Python + C     |
+|Deploy/dev platform    |Unknown        |Many Linux     |
+|CCFG frontend          |Yes            |Yes            |
+|CRG middleend          |Yes            |Yes            |
+|Compiling backend      |Yes, into C++  |No             |
+|Serialization          |No<sup>[2]</sup>|Yes           |
+|Simulating VM          |Yes, with OCaml|Yes, with C    |
 
 **About name**. Simple analogy. Process flow stream as galgame gameplay. Counting states as characters' favorability, which go up and down on different conditions, and decide important branching base on instant values. Finally, a successfully processing would be entering true route.
 
