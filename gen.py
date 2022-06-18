@@ -98,11 +98,17 @@ The simulating backend should do:
 TODO: find a proper anology for normal/good end
 11. set s to 1, goto #1
 
-p.s. In this execution model, S_JMP[][] == 0 has been used as failure transition
+In this execution model, S_JMP[][] == 0 has been used as failure transition
 indicator, which means there is always s > 0 when A[a] + s is used to index into
 S_*[]. If there is always A[] >= 0 (which is the case in this serialization),
 it will cause S_*[] unreachable. I just want to claim that I have noticed this 
 and by now don't think it would be a problem.
+
+Because certain combination of rules are impossible to be enabled at the same
+time, not all index in jump table J[] can map to a valid LPDFA index, because
+those impossible LPDFA are not constructed at all. This implementation uses some
+value > A_ACC to fill these "holes", which may be used for assertion in a debug
+build.
 
 ----
 
@@ -170,6 +176,11 @@ Although index by rule is preferred, the `relevant` is still provided because:
 !p1 & !p2 &  p3     either x >= 3 or y < 0      rule 3
 all combination with !p3        impossible
 """
+
+
+from itertools import count
+
+from lpdfa import construct
 
 
 def split_guard(transition_list):
@@ -249,6 +260,95 @@ def relevant(transition_list):
         )
 
 
-def serialize(transition_list):
-    for state, config_list in relevant(transition_list):
-        pass
+class Store:
+    def __init__(self):
+        self.a = ()
+        self.a_table = {}
+        self.g = ()
+        self.b = ()
+        self.j = ()
+        self.r = (0,)
+        self.c_table = {}
+        self.c_id = count(1)
+
+    def variable_id(self, variable):
+        if variable in self.c_table:
+            return self.c_table[variable]
+        id = next(self.c_id)
+        assert id < 64, "using more than 64 counters"
+        self.c_table[variable] = id
+        return id
+
+    def push_guard(self, guard):
+        def gen():  # (G_C, G_I, G_M)
+            for variable, (low, high) in guard.items():
+                id = self.variable_id(variable)
+                assert low or high
+                if low is not None:
+                    yield (id, low, 0)
+                if high is not None:
+                    yield (id, high, 1)
+
+        *merged, last = gen()
+        self.g += (*((*triple, False) for triple in merged), (*last, True))
+
+    def push_meta(self, transition_list):
+        construct_list = ()
+        for state, config_list in relevant(transition_list):
+            # for this state we are generating / will generate:
+            # * len(config_list) number of LPDFA
+            # * len(config_list) items in A[]. we first preserve these items
+            #   with None, then fill them one by `push_automata`
+            # * certain number of items in G[], by calling len(rule_table) times
+            #   `push_guard`. a small ceveat is len(rule_table) may be less than
+            #   the number of production rules producing `state`, because all
+            #   rules with trivial guard are not collected because:
+            #   * they incur no items in G[], there's no obvious way to let
+            #     runtime know it is evaluating a trivial guard
+            #   * they never be false, so we actually assert that every relevant
+            #     LPDFA will mix in their regular. it's ok that their truth
+            #     value not show up in bitset offset
+            # * 1 << len(rule_table) items in J[], consist of a snippet of jump
+            #   table for all relevant LPDFA
+            # * 1 item in R[] to show the offset of (next) jump table in J[]
+            # * 1 item in B[] to show the offset of (next) guard list in G[]
+
+            rule_table = {
+                rest: (1 << i, guard)
+                for i, (guard, rest) in enumerate(
+                    (guard, rest)
+                    for source, guard, *rest in enumerate(transition_list)
+                    if source == state and guard
+                )
+            }
+            assert (
+                len(rule_table) <= 6
+            ), "rule table more than 64 entries is unpractical"
+
+            def gen_index():
+                for _, rest_list in config_list:
+                    index = 0
+                    for rule in rest_list:
+                        if rule not in rule_table:
+                            continue
+                        rule_i, guard = rule_table[rule]
+                        index += rule_i
+                        self.push_guard(guard)
+                    yield index
+
+            index_table = {
+                index: len(self.a) + i for i, index in enumerate(gen_index())
+            }
+            j_snippet = (
+                index_table.get(index, "impossible")
+                for index in range(1 << len(rule_table))
+            )
+
+            self.j += j_snippet
+            self.a += (None,) * len(config_list)
+            assert len(self.r) == len(self.b) + 1  # r has prefix "0" item
+            self.a_table[state] = len(self.b)
+            self.b += (len(self.g),)
+            self.r += (len(self.j),)
+            construct_list += (rest_list for _, rest_list in config_list)
+        return construct_list
