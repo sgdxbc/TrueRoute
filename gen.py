@@ -196,18 +196,20 @@ from itertools import count
 def compile_action(step, var_id):
     # user defined extraction
     if step[0] == "trace":  # preferred
-        return 1001, var_id(step[1])
+        return 1001, step[1] if isinstance(step[1], int) else var_id(step[1])
     if step[0] == "token":  # compatible with FlowSifter
-        return 1001, var_id(step[1])
+        return 1001, step[1] if isinstance(step[1], int) else var_id(step[1])
 
     # stock operation
+    if step[0] == "imm":  # immediate number
+        return 100, var_id(step[1]), step[2]
     if step[0] == "addi":  # add counter with immediate number
         # addi dst, src, imm
-        return 100, var_id(step[1]), var_id(step[2]), step[3]
-    if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
         return 101, var_id(step[1]), var_id(step[2]), step[3]
-    if step[0] == "muli":
+    if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
         return 102, var_id(step[1]), var_id(step[2]), step[3]
+    if step[0] == "muli":
+        return 103, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "pos":
         return 200, var_id(step[1])
     if step[0] == "bounds":

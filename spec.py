@@ -97,39 +97,44 @@ class Grammar:
     @staticmethod
     def action(s):
         dst, expr = s.split(":=")
-        dst = dst.strip()
+        dst, expr = dst.strip(), expr.strip()
         # i start to feel lazy... complete a expr tower for me, thanks
+        if expr.isdigit():
+            return (("imm", dst, int(expr)),)
         # TODO replace `re` with `lpdfa`, let's bootstrap ^o^
-        if m := match(r"(\w+)\s*\*\s*(\w+)\s*(\+\s*(\w+))?", expr.strip()):
+        if m := match(r"(\w+)\s*\*\s*(\w+)\s*(\+\s*(\w+))?", expr):
             mul, src = (int(m[1]), m[2]) if m[1].isdigit() else (int(m[2]), m[1])
             if m[4]:
                 return ("muli", dst, src, mul), ("addi", dst, dst, int(m[4]))
             else:
                 return (("muli", dst, src, mul),)
-        if m := match(r"(\w+)\s*\+\s*(\w+)\s*\*\s*(\w+)", expr.strip()):
+        if m := match(r"(\w+)\s*\+\s*(\w+)\s*\*\s*(\w+)", expr):
             mul, src = (int(m[2]), m[3]) if m[2].isdigit() else (int(m[3]), m[2])
             add = int(m[1])
             return ("muli", dst, src, mul), ("addi", dst, dst, add)
-        if m := match(r"(\w+)\s*-\s*(\w+)", expr.strip()):
+        if m := match(r"(\w+)\s*-\s*(\w+)", expr):
             return (("subi", dst, m[1], int(m[2])),)
-        if m := match(r"(\w+)\s*\(\s*((\w+\s*,\s*)*(\w+)?)\s*\)", expr.strip()):
-            arg = tuple(a.strip() for a in m[2].split(","))
+        if m := match(r"(\w+)\s*\(\s*((\w+\s*,\s*)*(\w+)?)\s*\)", expr):
+            arg = tuple(a.strip() for a in m[2].split(",") if a.strip())
             stmt = False
             if m[1] in {"drop_tail"}:
                 assert not arg
                 stmt = True
-            elif m[1] in {"pos", "cur_byte", "cur_double_byte", "get_num", "get_hex"}:
+            # what the fuck is the standard of adding underscore or not
+            elif m[1] in {"pos", "cur_byte", "cur_double_byte", "getnum", "gethex"}:
                 assert not arg
             elif m[1] in {"skip", "skip_to", "notify"}:
                 assert len(arg) == 1
             elif m[1] in {"bounds", "save"}:
                 assert len(arg) == 2
                 stmt = True
-            else:  # support invoke extraction as a normal action?
-                assert False, f"unknown routine {m[1]}"
+            else:  # assume invoke extraction as a normal action
+                assert len(arg) == 1
+                arg = (int(arg[0]),) if arg[0].isdigit() else arg
+                stmt = True
             return ((m[1], *arg),) if stmt else ((m[1], dst, *arg),)
 
-        assert False, f"unsupported action: {expr.strip()}"
+        assert False, f"unsupported action: {expr}"
 
     # operator prcedence following POSIX extended regular expression syntax
     # https://www.boost.org/doc/libs/1_79_0/libs/regex/doc/html/boost_regex/syntax/basic_extended.html#boost_regex.syntax.basic_extended.operator_precedence
