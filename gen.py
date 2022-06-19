@@ -30,25 +30,26 @@ The simulating backend is expected to keep following permanent data:
     * S_MAX[], maximum priority ahead. If no decision ahead it is set to 0
     * S_ACC[], state decision if it is accepted. It is composed by:
         * S_PRI[], decision priority
-        * S_ACT[], decision action indexed by action table
-        * S_DST[], decision detination indexed by branching table B[]
-* A[], a list of LPDFA, represented as index into S[], which is the index of
-  LPDFA's start state minus 1
-* A_ACC, a countant not less than len(A[])
-* B[], a list of indexes into guard table G[], represents the upper bound of a 
-  range of guards
-* G[], a list of guard. It is composed by:
+        * S_ACT[], decision action indexed into action table U[]
+        * S_DST[], decision detination indexed into guard offset table G_I[] and
+          jump offset table J_I[]
+* A[] (maybe a better name is S_I[]), a list of LPDFA, represented as index into 
+  S[], which is the index of LPDFA's start state
+* A_ACC, a constant not less than len(A[])
+* G[] the guard table. It is composed by:
     * G_C[], the counter index
-    * G_I[], the compared immediate number
-    * G_M[], indicate whether it is a lower guard (i.e. G_I <= c[G_C]) where G_M 
-      is 0, or higher guard (i.e. c[G_C] < G_I) where G_M is 1. In either case, 
+    * G_N[], the compared immediate number
+    * G_M[], indicate whether it is a lower guard (i.e. G_N <= c[G_C]) where G_M 
+      is 0, or higher guard (i.e. c[G_C] < G_N) where G_M is 1. In either case, 
       the guard can be represented as:
-        G_M * (G_I - c[G_C]) + (G_M - 1) * (G_I - c[G_C]) >= G_M
+        G_M * (G_N - c[G_C]) + (G_M - 1) * (G_N - c[G_C]) >= G_M
     * G_T[], indicate whether this is a termination of guard merging, or this
       guard should be merged with the following one
-* J[], a list of destination LPDFA, which is indexed into A[] or is A_ACC
-* R[], a list of accumulated exponent of number of rules (the meaning here is 
-  not important), which is indexed into J[]
+* G_I[], a list of indexes into G[]
+* J[] jump table (technically A_I[] or S_I_I[]), a list of destination LPDFA, 
+  which is indexed into A[] or is A_ACC
+* J_I[] (technically S_I_I_I[] nevermind ^_^), a list of accumulated exponent 
+  of number of rules (the meaning here is not important), indexed into J[]
 * U[], a list of update (aka action table). Each item of U[] may be one of:
   * the data length of a (composed) action
   * action id
@@ -68,41 +69,35 @@ representation of:
   * user defined extraction routine
 
 The simulating backend should do:
-1. if S_ACC[A[a] + s] is not null, we reach a (possibly new) decision
-    1.1. if d is null or S_PRI[A[a] + s] >= d_pri, we reach a higher decision, 
-         or an equal one with longer (more greedy) matching
-        1.1.1. set d to S_ACC[A[a] + s] 
-        1.1.2. set l to 0
-    1.2. if d is not null and S_MAX[A[a] + s] < d_pri, we don't have any equal
-         or higher decision ahead, goto #5
-2. read next byte from data stream and set v2 to it, set l to l + 1
-    * if it is the end of stream, goto #5
-3. set s to S_JMP[A[a] + s][v2]
-4. if s is not 0 goto #1
-5. now we are done with current LPDFA. If d is null, we have not reached any 
+1. set v1 to current LPDFA state index A[a] + s - 1
+2. if S_ACC[v1] is not null, we reach a (possibly new) decision
+    2.1. if d is null or S_PRI[v1] >= d_pri, we reach a higher decision, or an 
+         equal one with longer (more greedy) matching
+        2.1.1. set d to S_ACC[v1] 
+        2.1.2. set l to 0
+    2.2. if d is not null and S_MAX[v1] < d_pri, we don't have any equal or 
+         higher decision ahead, goto #6
+3. read next byte from data stream and set v3 to it, set l to l + 1
+    * if it is the end of stream, goto #6
+4. set s to S_JMP[v1][v3]
+5. if s is not 0 goto #1
+6. now we are done with current LPDFA. If d is null, we have not reached any 
    decision yet, report this is a dead end
-6. ask data stream to rollback l, set l to 0
-7. ask action interpreter to execute U[d_act]
-8. for every v8 in B[d_dst - 1] (inclusive) to B[d_dst] (exclusive), or 0 to 
-   B[d_dst] if d_dst is 0
-    8.1. keep evaluate G[v8] as desribed in G_M, until reach a guard with 
-         G_T[v8] is true. set v81 to 1 if all evaluated guard are true, 
+7. ask data stream to rollback l, set l to 0
+8. ask action interpreter to execute U[d_act]
+9. for every v9 in G_I[d_dst] (inclusive) to G_I[d_dst + 1] (exclusive)
+    9.1. keep evaluate G[v9] as desribed in G_M, until reach a guard with 
+         G_T[v9] is true. set v91 to 1 if all evaluated guard are true, 
          otherwise 0
-        * it is asserted that G_T[B[d_dst] - 1] must be true
-    8.2. set v82 to accumulated bitset of v81, e.g. set v82 to 5 (0b101) if in 
-         v8's indexed range there are three terminating values, and the 1st and 
+        * it is asserted that G_T[G_I[d_dst + 1] - 1] must be true
+    9.2. set v92 to accumulated bitset of v91, e.g. set v92 to 5 (0b101) if in 
+         v9's indexed range there are three terminating guards, and the 1st and 
          3rd guard list are evaluated to be all true
-9. set a to J[R[d_dst] + v82]
-10. if a equals A_ACC, we have finish the whole grammar. Report this is a bad 
+10. set a to J[J_I[d_dst] + v92]
+11. if a equals A_ACC, we have finish the whole grammar. Report this is a bad 
     end if data stream is not reaching end, otherwise true end
 TODO: find a proper anology for normal/good end
-11. set s to 1, goto #1
-
-In this execution model, S_JMP[][] == 0 has been used as failure transition
-indicator, which means there is always s > 0 when A[a] + s is used to index into
-S_*[]. If there is always A[] >= 0 (which is the case in this serialization),
-it will cause S_*[] unreachable. I just want to claim that I have noticed this 
-and by now don't think it would be a problem.
+12. set s to 1, goto #1
 
 Because certain combination of rules are impossible to be enabled at the same
 time, not all index in jump table J[] can map to a valid LPDFA index, because
@@ -114,17 +109,25 @@ build.
 
 Serialization specification
 
-Metadata:
-* Value range of d_dst, which is also len(B[]) and len(R[]), number of CA states
-* Value range of a, which is also len(A[]), number of LPDFA instances
-    * A_ACC uses len(A[])
-* len(S[]), total state number of LPDFA instances
-* len(J[]), total size of index by rule exponential lookup tables
-* len(G[]), number of single counter single side guards
-* len(U[]), size of action bytecode data
+A series of discrete meta numbers followed by the lists
+* Value range of d_dst, which is also len(G_I[]) - 1 and len(J_I[]) - 1, number 
+  of CA states
+* Value range of a, which is also len(A[]) - 1, number of LPDFA instances
+    * A_ACC uses len(A[]) - 1
+* len(U[])
+* G_I[], J_I[] and A[]
+* G_C[], G_I[], G_N[] and G_T[] whose length is G_I[-1]
+* J[] whose length is J_I[-1]
+* U[]
+* S_MAX[], S_PRI[], S_ACT[] and S_DST[] whose length is A[-1] (remember A[] is 
+  also S_I[])
+* S_JMP[] whose length is A[-1] * 256
 
-Followed by content of B[], R[], A[], J[], G_C[], G_I[], G_M[], G_T[], U[], 
-S_MAX[], S_PRI[], S_ACT[], S_DST[], S_JMP[].
+In conclusion the three index table G_I[], J_I[] and A[] all have one more item
+than expected. They maintain an invariant that their first item is always 0, and
+their last item is always the length of the list they are indexing into. It is
+possible to shift out the first item, but I would keep them rather than 
+introduce `... - 1`  in execution model and mess things up.
 
 ----
 
@@ -179,8 +182,6 @@ all combination with !p3        impossible
 
 
 from itertools import count
-
-from lpdfa import construct
 
 
 def split_guard(transition_list):
@@ -262,12 +263,13 @@ def relevant(transition_list):
 
 class Store:
     def __init__(self):
-        self.a = ()
-        self.a_table = {}
+        self.s = ()
+        self.s_i = (0,)
+        self.state_table = {}
         self.g = ()
-        self.b = ()
+        self.g_i = (0,)
         self.j = ()
-        self.r = (0,)
+        self.j_i = (0,)
         self.c_table = {}
         self.c_id = count(1)
 
@@ -280,7 +282,7 @@ class Store:
         return id
 
     def push_guard(self, guard):
-        def gen():  # (G_C, G_I, G_M)
+        def gen():  # (G_C, G_N, G_M)
             for variable, (low, high) in guard.items():
                 id = self.variable_id(variable)
                 assert low or high
@@ -301,17 +303,17 @@ class Store:
             #   with None, then fill them one by `push_automata`
             # * certain number of items in G[], by calling len(rule_table) times
             #   `push_guard`. a small ceveat is len(rule_table) may be less than
-            #   the number of production rules producing `state`, because all
+            #   the number of production rules produced by `state`, because all
             #   rules with trivial guard are not collected because:
             #   * they incur no items in G[], there's no obvious way to let
             #     runtime know it is evaluating a trivial guard
-            #   * they never be false, so we actually assert that every relevant
-            #     LPDFA will mix in their regular. it's ok that their truth
-            #     value not show up in bitset offset
+            #   * they never be false, so it is actually asserted that every
+            #     relevant LPDFA will mix in their regular. it's ok that their
+            #     truth value not show up in bitset offset
             # * 1 << len(rule_table) items in J[], consist of a snippet of jump
             #   table for all relevant LPDFA
-            # * 1 item in R[] to show the offset of (next) jump table in J[]
-            # * 1 item in B[] to show the offset of (next) guard list in G[]
+            # * 1 item in J_I[] to show the offset of (next) jump table in J[]
+            # * 1 item in G_I[] to show the offset of (next) guard list in G[]
 
             rule_table = {
                 rest: (1 << i, guard)
@@ -322,7 +324,7 @@ class Store:
                 )
             }
             assert (
-                len(rule_table) <= 6
+                1 << len(rule_table) <= 64
             ), "rule table more than 64 entries is unpractical"
 
             def gen_index():
@@ -337,7 +339,7 @@ class Store:
                     yield index
 
             index_table = {
-                index: len(self.a) + i for i, index in enumerate(gen_index())
+                index: len(self.s_i) + i - 1 for i, index in enumerate(gen_index())
             }
             j_snippet = (
                 index_table.get(index, "impossible")
@@ -345,10 +347,62 @@ class Store:
             )
 
             self.j += j_snippet
-            self.a += (None,) * len(config_list)
-            assert len(self.r) == len(self.b) + 1  # r has prefix "0" item
-            self.a_table[state] = len(self.b)
-            self.b += (len(self.g),)
-            self.r += (len(self.j),)
+            self.s_i += (None,) * len(config_list)
+            self.state_table = {**self.state_table, state: len(self.state_table)}
+            self.g_i += (len(self.g),)
+            self.j_i += (len(self.j),)
             construct_list += (rest_list for _, rest_list in config_list)
+        self.state_table = {**self.state_table, None: len(self.state_table)}
+        assert len(self.g_i) == len(self.j_i) == len(self.state_table)
         return construct_list
+
+    def push_automata(self, index, start_state):
+        assert not self.s_i[index + 1]
+
+        state_list = tuple(start_state.reachable())
+        state_table = {state: i for i, state in enumerate(state_list)}
+
+        def gen():
+            for state in state_list:
+                byte_table = state.as_deterministic()
+                s_jmp = tuple(  # we may finalize multiple times, at some time
+                    state_table.get(byte_table.get(byte, None), -1) + 1
+                    for byte in range(256)
+                )
+                s_max = state.ahead and state.ahead[0]
+                if state.decision:
+                    s_pri, act, dst = state.decision
+                    yield s_jmp, s_max, s_pri, s_act, self.state_table[dst]
+                else:
+                    yield s_jmp, s_max, None, None, None
+
+        self.s += tuple(gen())
+        self.s_i = tuple(
+            len(self.s) if i == index + 1 else original
+            for i, original in enumerate(self.s_i)
+        )
+
+    def finalize(self):
+        assert all(self.s_i)
+        assert len(self.g_i) == len(self.j_i)
+        assert len(self.g) == self.g_i[-1]
+        assert len(self.j) == self.j_i[-1]
+        assert len(self.s) == self.s_i[-1]
+
+        yield len(self.g_i) - 1
+        yield len(self.s_i) - 1
+        # TODO U[]
+        yield from self.g_i
+        yield from self.j_i
+        yield from self.s_i
+        yield from (g[0] for g in self.g)
+        yield from (g[1] for g in self.g)
+        yield from (g[2] for g in self.g)
+        yield from (int(g[3]) for g in self.g)
+        yield from (item if item != "impossible" else len(self.s_i) for item in self.j)
+        yield from self.u  # TODO
+        yield from (s[1] or 0 for s in self.s)  # 0 for no decision ahead
+        yield from (s[2] or 0 for s in self.s)  # 0 for not accepted
+        yield from (s[3] or 0 for s in self.s)  # placeholder
+        yield from (s[4] or 0 for s in self.s)  # placeholder
+        yield from (d for s in self.s for d in s[0])
