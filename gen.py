@@ -2,7 +2,18 @@
 gen.py: Serialization protocol for Counting Automata. This is the input prepared
 for simulated CA implementation.
 
-TODO: main interface
+The main interface is `Store`. A `Store` instance should be used in three steps:
+first call `push_meta` with transition list returned by `crg.optimize`, which
+will update store state, and return a list of headless transition list. Call
+`lpdfa.construct` with each headless transition list in order, and pass returned
+`State` instance into `push_automata`. Finally, call `finalize` when all LPDFA
+are pushed, and it will yield serialized data, i.e. a number sequence. The 
+interface is designed in a little bit verbose way, because I want to keep things
+modular, to e.g. allow perform unit test on `gen` independently in respect to
+the correctness of `lpdfa`.
+
+The following document explain what data structures are serialized, how to use
+these data structure, and detial serialization format.
 
 ----
 
@@ -24,6 +35,7 @@ The simulating backend is expected to keep following variable data:
     i.e. "p" counter in paper
 
 The simulating backend is expected to keep following permanent data:
+* DST_ACC, a constant that is not less than len(G_I[]) - 1
 * S[], a list of LPDFA state. It is composed by:
     * S_JMP[][256], state byte table. The value is index of S. Backend may use a
       single dimension flat array to represent S_JMP
@@ -35,7 +47,6 @@ The simulating backend is expected to keep following permanent data:
           jump offset table J_I[]
 * A[] (maybe a better name is S_I[]), a list of LPDFA, represented as index into 
   S[], which is the index of LPDFA's start state
-* A_ACC, a constant not less than len(A[])
 * G[] the guard table. It is composed by:
     * G_C[], the counter index
     * G_N[], the compared immediate number
@@ -60,13 +71,14 @@ The simulating backend should also keep (and decide) a proper runtime
 representation of:
 * Action interpreter, which accept a valid slice (i.e. an index i where U[i] 
   means data length) of U, i.e. U[i + 1..i + U[i]], and:
+  * manipulate data stream
   * update c[] accordingly
   * possibly invoke user defined extraction routine
 * Data stream, which support:
   * moving forward
   * rollback l bytes from current position
   * preserve all content after position c[0], and the content is accessible from
-  * user defined extraction routine
+    user defined extraction routine
 
 The simulating backend should do:
 1. set v1 to current LPDFA state index A[a] + s - 1
@@ -85,35 +97,34 @@ The simulating backend should do:
    decision yet, report this is a dead end
 7. ask data stream to rollback l, set l to 0
 8. ask action interpreter to execute U[d_act]
-9. for every v9 in G_I[d_dst] (inclusive) to G_I[d_dst + 1] (exclusive)
-    9.1. keep evaluate G[v9] as desribed in G_M, until reach a guard with 
-         G_T[v9] is true. set v91 to 1 if all evaluated guard are true, 
+9. if d_dst equals DST_ACC, we have finish the whole grammar. Report this is a
+   bad end if data stream is not reaching end, otherwise true end
+TODO: find a proper anology for normal/good end
+10. for every v10 in G_I[d_dst] (inclusive) to G_I[d_dst + 1] (exclusive)
+    10.1. keep evaluate G[v10] as desribed in G_M, until reach a guard with 
+         G_T[v10] is true. set v10a to 1 if all evaluated guard are true, 
          otherwise 0
         * it is asserted that G_T[G_I[d_dst + 1] - 1] must be true
-    9.2. set v92 to accumulated bitset of v91, e.g. set v92 to 5 (0b101) if in 
-         v9's indexed range there are three terminating guards, and the 1st and 
-         3rd guard list are evaluated to be all true
-10. set a to J[J_I[d_dst] + v92]
-11. if a equals A_ACC, we have finish the whole grammar. Report this is a bad 
-    end if data stream is not reaching end, otherwise true end
-TODO: find a proper anology for normal/good end
+    10.2. set v10b to accumulated bitset of v10a, e.g. set v10b to 5 (0b101) if 
+         in v10's indexed range there are three terminating guards, and the 1st 
+         and 3rd guard list are evaluated to be all true
+11. set a to J[J_I[d_dst] + v10b]
 12. set s to 1, goto #1
 
 Because certain combination of rules are impossible to be enabled at the same
 time, not all index in jump table J[] can map to a valid LPDFA index, because
 those impossible LPDFA are not constructed at all. This implementation uses some
-value > A_ACC to fill these "holes", which may be used for assertion in a debug
-build.
+value >= len(A[]) to fill these "holes", which may be used for assertion in a 
+debug build.
 
 ----
 
 Serialization specification
 
 A series of discrete meta numbers followed by the lists
-* Value range of d_dst, which is also len(G_I[]) - 1 and len(J_I[]) - 1, number 
-  of CA states
+* Value range of d_dst, which is also len(G_I[]) - 1, len(J_I[]) - 1 and 
+  DST_ACC, number of CA states
 * Value range of a, which is also len(A[]) - 1, number of LPDFA instances
-    * A_ACC uses len(A[]) - 1
 * len(U[])
 * G_I[], J_I[] and A[]
 * G_C[], G_I[], G_N[] and G_T[] whose length is G_I[-1]
@@ -179,9 +190,57 @@ Although index by rule is preferred, the `relevant` is still provided because:
 !p1 & !p2 &  p3     either x >= 3 or y < 0      rule 3
 all combination with !p3        impossible
 """
-
-
 from itertools import count
+
+
+def compile_action(step, var_id):
+    # user defined extraction
+    if step[0] == "trace":  # preferred
+        return 1001, var_id(step[1])
+    if step[0] == "token":  # compatible with FlowSifter
+        return 1001, var_id(step[1])
+
+    # stock operation
+    if step[0] == "addi":  # add counter with immediate number
+        # addi dst, src, imm
+        return 100, var_id(step[1]), var_id(step[2]), step[3]
+    if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
+        return 101, var_id(step[1]), var_id(step[2]), step[3]
+    if step[0] == "muli":
+        return 102, var_id(step[1]), var_id(step[2]), step[3]
+    if step[0] == "pos":
+        return 200, var_id(step[1])
+    if step[0] == "bounds":
+        return 201, var_id(step[1]), var_id(step[2])
+    if step[0] == "skip":
+        return 202, var_id(step[1]), var_id(step[2])
+    if step[0] == "drop_tail":
+        return (203,)
+    if step[0] == "skip_to":
+        return 204, var_id(step[1]), var_id(step[2])
+    if step[0] == "notify":
+        return 205, var_id(step[1]), var_id(step[2])
+    if step[0] == "cur_byte":
+        return 206, var_id(step[1])
+    if step[0] == "cur_double_byte":
+        return 207, var_id(step[1])
+    if step[0] == "getnum":
+        return 208, var_id(step[1])
+    if step[0] == "gethex":
+        return 209, var_id(step[1])
+    if step[0] == "save":  # not sure why get commented in FlowSifter but seems
+        # really fun
+        return 210, var_id(step[1]), var_id(step[2])
+
+
+def action_str(action):
+    def step_str(step):
+        op, *arg = step
+        if not arg:
+            return op
+        return op + " " + ", ".join(str(a) for a in arg)
+
+    return "; ".join(step_str(step) for step in action)
 
 
 def split_guard(transition_list):
@@ -270,8 +329,9 @@ class Store:
         self.g_i = (0,)
         self.j = ()
         self.j_i = (0,)
-        self.c_table = {}
+        self.c_table = {"p": 0}
         self.c_id = count(1)
+        self.u = (0,)
 
     def variable_id(self, variable):
         if variable in self.c_table:
@@ -293,6 +353,18 @@ class Store:
 
         *merged, last = gen()
         self.g += (*((*triple, False) for triple in merged), (*last, True))
+
+    def push_action(self, action):
+        if not action:
+            # U[0] == 0 is the shared "no action" stub
+            # it represents a zero length no-op bytecode
+            return 0
+        u_snippet = sum(
+            (compile_action(step, self.variable_id) for step in action), start=()
+        )
+        i = len(self.u)
+        self.u += (len(u_snippet), *u_snippet)
+        return i
 
     def push_meta(self, transition_list):
         construct_list = ()
@@ -357,6 +429,7 @@ class Store:
         return construct_list
 
     def push_automata(self, index, start_state):
+        assert all(self.s_i[: index + 1])
         assert not self.s_i[index + 1]
 
         state_list = tuple(start_state.reachable())
@@ -372,7 +445,13 @@ class Store:
                 s_max = state.ahead and state.ahead[0]
                 if state.decision:
                     s_pri, act, dst = state.decision
-                    yield s_jmp, s_max, s_pri, s_act, self.state_table[dst]
+                    yield (
+                        s_jmp,
+                        s_max,
+                        s_pri,
+                        self.push_action(act),
+                        self.state_table[dst],
+                    )
                 else:
                     yield s_jmp, s_max, None, None, None
 
@@ -384,14 +463,14 @@ class Store:
 
     def finalize(self):
         assert all(self.s_i)
-        assert len(self.g_i) == len(self.j_i)
+        assert len(self.g_i) == len(self.j_i) == self.state_table[None] + 1
         assert len(self.g) == self.g_i[-1]
         assert len(self.j) == self.j_i[-1]
         assert len(self.s) == self.s_i[-1]
 
         yield len(self.g_i) - 1
         yield len(self.s_i) - 1
-        # TODO U[]
+        yield len(self.u)
         yield from self.g_i
         yield from self.j_i
         yield from self.s_i
@@ -400,7 +479,7 @@ class Store:
         yield from (g[2] for g in self.g)
         yield from (int(g[3]) for g in self.g)
         yield from (item if item != "impossible" else len(self.s_i) for item in self.j)
-        yield from self.u  # TODO
+        yield from self.u
         yield from (s[1] or 0 for s in self.s)  # 0 for no decision ahead
         yield from (s[2] or 0 for s in self.s)  # 0 for not accepted
         yield from (s[3] or 0 for s in self.s)  # placeholder
