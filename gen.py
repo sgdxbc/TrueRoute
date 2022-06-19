@@ -232,6 +232,8 @@ def compile_action(step, var_id):
         # really fun
         return 210, var_id(step[1]), var_id(step[2])
 
+    assert False, f"cannot compile operation {step[0]}"
+
 
 def action_str(action):
     def step_str(step):
@@ -241,6 +243,21 @@ def action_str(action):
         return op + " " + ", ".join(str(a) for a in arg)
 
     return "; ".join(step_str(step) for step in action)
+
+
+def guard_str(guard):
+    if not guard:
+        return "true"
+
+    def bound_str(bound):
+        low, high = bound
+        low = str(low) if low is not None else ""
+        high = str(high) if high is not None else ""
+        return f"{low}..{high}"
+
+    return "; ".join(
+        f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
+    )
 
 
 def split_guard(transition_list):

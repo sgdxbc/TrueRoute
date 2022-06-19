@@ -35,6 +35,7 @@ work flow is to postprocess the rule list with `gen.relevant`, which is the way
 adpoted by cli's `ca` command. See `gen` module document in advance.
 """
 import string
+import gen
 
 
 class RuleItem:
@@ -73,7 +74,7 @@ class RuleItem:
         return counter
 
     def __str__(self):
-        action = f" ({action_str(self.action)})" if self.action else ""
+        action = f" ({gen.action_str(self.action)})" if self.action else ""
         if self.is_terminal():
             return f"/{self.terminal}/{action}"
         else:
@@ -124,7 +125,7 @@ class ProductionRule:
     default_priority = 50
 
     def __str__(self):
-        guard = f" ({guard_str(self.guard)})" if self.guard else ""
+        guard = f" ({gen.guard_str(self.guard)})" if self.guard else ""
         body = " ".join(str(item) for item in self.body)
         return f"{self.head}{guard} {self.priority} -> {body}"
 
@@ -397,12 +398,6 @@ def approx(grammar):
     )[approx_symbol] - {Regular.epsilon}
 
     counter = RuleItem.new_counter()
-    start_item = RuleItem(
-        terminal=Regular.new_union(start), action=(f"{counter} := {counter} + 1",)
-    )
-    stop_item = RuleItem(
-        terminal=Regular.new_union(stop), action=(f"{counter} := {counter} - 1",)
-    )
     approx_item = RuleItem(nonterminal=approx_symbol)
     return (
         ProductionRule(
@@ -415,13 +410,25 @@ def approx(grammar):
             approx_symbol,
             {counter: (0, None)},
             ProductionRule.default_priority,
-            (start_item, approx_item),
+            (
+                RuleItem(
+                    terminal=Regular.new_union(start),
+                    action=(("addi", counter, counter, 1),),
+                ),
+                approx_item,
+            ),
         ),
         ProductionRule(
             approx_symbol,
             {counter: (1, None)},
             ProductionRule.default_priority,
-            (stop_item, approx_item),
+            (
+                RuleItem(
+                    terminal=Regular.new_union(stop),
+                    action=(("subi", counter, counter, 1),),
+                ),
+                approx_item,
+            ),
         ),
         ProductionRule(
             approx_symbol,
@@ -474,6 +481,8 @@ def eliminate_idle(grammar):
 
 def optimize(grammar, extraction_grammar):
     all_subgrammar = subgrammar_table(extraction_grammar + grammar)
+    {name: RuleItem.new_nonterminal(name) for name in all_subgrammar}
+
     subgrammar = subgrammar_table(grammar)
     normal = normal_set(grammar)
     approx_list = tuple(
@@ -708,28 +717,6 @@ def compose_action(action, another_action):
     return action + another_action
 
 
-# tests, cli and shared assets
-
-
-def guard_str(guard):
-    if not guard:
-        return "true"
-
-    def bound_str(bound):
-        low, high = bound
-        low = str(low) if low is not None else ""
-        high = str(high) if high is not None else ""
-        return f"{low}..{high}"
-
-    return "; ".join(
-        f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
-    )
-
-
-def action_str(action):
-    return "; ".join(str(step) for step in action)
-
-
 # shared asset for tests and main
 
 symbol_b = RuleItem(nonterminal="B")
@@ -741,7 +728,9 @@ varstring = (
         {},
         ProductionRule.default_priority,
         (
-            RuleItem(terminal=Regular.new_literal(b"0"), action=("c := c * 2",)),
+            RuleItem(
+                terminal=Regular.new_literal(b"0"), action=(("muli", "c", "c", 2),)
+            ),
             symbol_b,
         ),
     ),
@@ -750,7 +739,10 @@ varstring = (
         {},
         ProductionRule.default_priority,
         (
-            RuleItem(terminal=Regular.new_literal(b"1"), action=("c := c * 2 + 1",)),
+            RuleItem(
+                terminal=Regular.new_literal(b"1"),
+                action=(("muli", "c", "c", 2), ("addi", "c", "c", 1)),
+            ),
             symbol_b,
         ),
     ),
@@ -764,7 +756,10 @@ varstring = (
         "V",
         {"c": (1, None)},
         ProductionRule.default_priority,
-        (RuleItem(terminal=Regular.wildcard, action=("c := c - 1",)), symbol_v),
+        (
+            RuleItem(terminal=Regular.wildcard, action=(("subi", "c", "c", 1),)),
+            symbol_v,
+        ),
     ),
     ProductionRule(
         "V",
@@ -811,8 +806,8 @@ extr_dyck = (
         {},
         ProductionRule.default_priority,
         (
-            RuleItem(terminal=Regular.new_literal(b"["), action=("p := pos()",)),
-            RuleItem(nonterminal="S", action=("_ := param(p)",)),
+            RuleItem(terminal=Regular.new_literal(b"["), action=(("pos", "p"),)),
+            RuleItem(nonterminal="S", action=(("param", "p"),)),
             RuleItem(terminal=Regular.new_literal(b"]")),
             RuleItem(nonterminal="S"),
         ),
@@ -821,21 +816,21 @@ extr_dyck = (
 
 
 def format_str(transition_list):
-    def gen():
+    def gen_line():
         # the field width is designed for 80 width terminal, only keep toy
         # transitions in mind
         # real world transitions are too complex to be printed nicely
-        yield "{:8}{:24}{:4}{:12}{:24}{:8}".format(
+        yield "{:8}{:18}{:4}{:12}{:30}{:8}".format(
             "Source", "Guard", "Pri", "Regular", "Action", "Target"
         )
         for source, guard, priority, regular, action, target in transition_list:
             target = target or "(accept)"
             yield (
-                f"{source:8}{guard_str(guard):24}{priority:<4}"
-                f"{str(regular):12}{action_str(action):24}{target:8}"
+                f"{source:8}{gen.guard_str(guard):18}{priority:<4}"
+                f"{str(regular):12}{gen.action_str(action):30}{target:8}"
             )
 
-    return "\n".join(gen())
+    return "\n".join(gen_line())
 
 
 if __name__ == "__main__":

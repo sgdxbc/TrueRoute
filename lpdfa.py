@@ -17,7 +17,8 @@ methods of `State` instance:
 TODO: automata minimization
 """
 from itertools import count
-from crg import Regular, action_str
+from crg import Regular
+from gen import action_str
 
 
 class State:
@@ -316,8 +317,8 @@ def format_str(state):
 
 
 if __name__ == "__main__":
-    from crg import optimize, dyck, extr_dyck, guard_str
-    from gen import relevant
+    from crg import optimize, dyck, extr_dyck
+    from gen import relevant, guard_str
 
     for source, config_list in relevant(tuple(optimize(dyck, extr_dyck))):
         for guard_gen, transition_list in config_list:

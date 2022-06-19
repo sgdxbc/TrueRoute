@@ -11,6 +11,7 @@ order to pass into `crg.optimize`.
 """
 from string import ascii_letters, digits, whitespace
 from crg import ProductionRule, RuleItem, Regular, compose_action
+from re import match
 
 
 # you should put recusive descent as my epitaph
@@ -77,21 +78,58 @@ class Grammar:
     @staticmethod
     def guard(s):
         if ">=" in s:
-            [variable, low] = s.split(">=")
+            variable, low = s.split(">=")
             return variable.strip(), (int(low), None)
         if "<=" in s:
-            [variable, inclusive_high] = s.split("<=")
+            variable, inclusive_high = s.split("<=")
             return variable.strip(), (None, int(inclusive_high) + 1)
         if "==" in s:  # why not just =
-            [variable, low] = s.split("==")
+            variable, low = s.split("==")
             return variable.strip(), (int(low), int(low) + 1)
         if ">" in s:
-            [variable, exclusive_low] = s.split(">")
+            variable, exclusive_low = s.split(">")
             return variable.strip(), (int(exclusive_low) + 1, None)
         if "<" in s:
-            [variable, high] = s.split("<")
+            variable, high = s.split("<")
             return variable.strip(), (None, high)
         assert False, f"unsupport guard {s}"
+
+    @staticmethod
+    def action(s):
+        dst, expr = s.split(":=")
+        dst = dst.strip()
+        # i start to feel lazy... complete a expr tower for me, thanks
+        # TODO replace `re` with `lpdfa`, let's bootstrap ^o^
+        if m := match(r"(\w+)\s*\*\s*(\w+)\s*(\+\s*(\w+))?", expr.strip()):
+            mul, src = (int(m[1]), m[2]) if m[1].isdigit() else (int(m[2]), m[1])
+            if m[4]:
+                return ("muli", dst, src, mul), ("addi", dst, dst, int(m[4]))
+            else:
+                return (("muli", dst, src, mul),)
+        if m := match(r"(\w+)\s*\+\s*(\w+)\s*\*\s*(\w+)", expr.strip()):
+            mul, src = (int(m[2]), m[3]) if m[2].isdigit() else (int(m[3]), m[2])
+            add = int(m[1])
+            return ("muli", dst, src, mul), ("addi", dst, dst, add)
+        if m := match(r"(\w+)\s*-\s*(\w+)", expr.strip()):
+            return (("subi", dst, m[1], int(m[2])),)
+        if m := match(r"(\w+)\s*\(\s*((\w+\s*,\s*)*(\w+)?)\s*\)", expr.strip()):
+            arg = tuple(a.strip() for a in m[2].split(","))
+            stmt = False
+            if m[1] in {"drop_tail"}:
+                assert not arg
+                stmt = True
+            elif m[1] in {"pos", "cur_byte", "cur_double_byte", "get_num", "get_hex"}:
+                assert not arg
+            elif m[1] in {"skip", "skip_to", "notify"}:
+                assert len(arg) == 1
+            elif m[1] in {"bounds", "save"}:
+                assert len(arg) == 2
+                stmt = True
+            else:  # support invoke extraction as a normal action?
+                assert False, f"unknown routine {m[1]}"
+            return ((m[1], *arg),) if stmt else ((m[1], dst, *arg),)
+
+        assert False, f"unsupported action: {expr.strip()}"
 
     # operator prcedence following POSIX extended regular expression syntax
     # https://www.boost.org/doc/libs/1_79_0/libs/regex/doc/html/boost_regex/syntax/basic_extended.html#boost_regex.syntax.basic_extended.operator_precedence
@@ -248,7 +286,7 @@ class Grammar:
             # that, since `p` is the only variable who can be manipulated
             # without corrupt things by now
             # using a placeholder to make thing explicit
-            self.append_action((f"_ := {self.extract}(p)",))
+            self.append_action(((self.extract, "p"),))
             self.extract = None
             self.skip(")")
             return self.item_list()
@@ -274,7 +312,7 @@ class Grammar:
         elif self.s[0] in ascii_letters + "_":
             name = self.name()
             if self.s[0] == "(":
-                self.append_action(("p := pos()",))
+                self.append_action((("pos", "p"),))
                 self.extract = name
                 self.skip("(")
                 return self.item()  # assert at least one item remain (and in
@@ -287,5 +325,5 @@ class Grammar:
             ), f"expect terminal/nonterminal/extract: {self.s.splitlines()[0]}"
         action = ()
         if self.s[0] == "[":
-            action = tuple(self.bracket())  # TODO
+            action = sum((self.action(step) for step in self.bracket()), start=())
         return RuleItem(terminal=terminal, nonterminal=nonterminal, action=action)
