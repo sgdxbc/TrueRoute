@@ -42,7 +42,7 @@ if command == "ca":
         for guard_gen, transition_list in config_list:
             print(f"from {source}")
             for guard in guard_gen:
-                print(f"  if {crg.guard_str(guard)}")
+                print(f"  if {gen.guard_str(guard)}")
             for line in lpdfa.format_str(
                 lpdfa.construct(tuple(transition_list))
             ).splitlines():

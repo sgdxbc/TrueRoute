@@ -5,7 +5,7 @@ Developed with Python 3.10.5, but should work on many recent versions.
 **Sanity check.** Run `python -m unittest`. ![Workflow status](https://github.com/sgdxbc/TrueRoute/actions/workflows/python-app.yml/badge.svg)
 
 **Compare to [MSU-SSL/FlowSifter](https://github.com/MSU-SSL/FlowSifter).**
-||FlowShifter|TrueRoute|
+||FlowSifter|TrueRoute|
 |-|-|-|
 |Language               |OCaml          |Python + C     |
 |Deploy/dev platform    |Unknown        |Many Linux     |

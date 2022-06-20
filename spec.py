@@ -136,6 +136,78 @@ class Grammar:
 
         assert False, f"unsupported action: {expr}"
 
+    def rule(self):
+        head = self.name()
+        guard = {}
+        priority = ProductionRule.default_priority
+        if self.s[0] == "[":
+            # TODO merge guard on same variable instead of override
+            guard = dict(Grammar.guard(part) for part in self.bracket())
+        if self.s[0] in digits:
+            priority = self.unsigned()
+        self.skip("->")
+        self.prev_item = RuleItem(terminal=Regular.epsilon)
+        item_list = self.item_list()
+        if self.prev_item.action or not item_list:
+            item_list = (self.prev_item, *item_list)
+        self.prev_item = None
+        return ProductionRule(head, guard, priority, item_list)
+
+    def item_list(self):
+        if self.s[0] == ";":
+            assert self.extract is None
+            self.skip(";")
+            return ()
+        if self.s[0] == ")":
+            assert self.extract is not None
+            # i don't fully understand the reason to assign a possible-null
+            # value returned by custom extraction action back into `p`
+            # i guess the semantic requires there must be an assignment cause
+            # that, since `p` is the only variable who can be manipulated
+            # without corrupt things by now
+            # using a placeholder to make thing explicit
+            self.append_action(((self.extract, "p"),))
+            self.extract = None
+            self.skip(")")
+            return self.item_list()
+
+        # we must do `item()` first, which may cause `prev_item` refer to a
+        # different item, then save the changed reference
+        self.prev_item, old_prev = self.item(), self.prev_item
+        item_list = self.item_list()
+        item, self.prev_item = self.prev_item, old_prev
+        return item, *item_list
+
+    def append_action(self, action):
+        assert self.prev_item is not None
+        self.prev_item = RuleItem(
+            terminal=self.prev_item.terminal,
+            nonterminal=self.prev_item.nonterminal,
+            action=compose_action(self.prev_item.action, action),
+        )
+
+    def item(self):
+        if self.s[0] == "/":
+            terminal, nonterminal = self.regex(), None
+        elif self.s[0] in ascii_letters + "_":
+            name = self.name()
+            if self.s[0] == "(":
+                self.append_action((("pos", "p"),))
+                self.extract = name
+                self.skip("(")
+                return self.item()  # assert at least one item remain (and in
+                # the extracting paren)
+
+            nonterminal, terminal = name, None
+        else:
+            assert (
+                False
+            ), f"expect terminal/nonterminal/extract: {self.s.splitlines()[0]}"
+        action = ()
+        if self.s[0] == "[":
+            action = sum((self.action(step) for step in self.bracket()), start=())
+        return RuleItem(terminal=terminal, nonterminal=nonterminal, action=action)
+
     # operator prcedence following POSIX extended regular expression syntax
     # https://www.boost.org/doc/libs/1_79_0/libs/regex/doc/html/boost_regex/syntax/basic_extended.html#boost_regex.syntax.basic_extended.operator_precedence
     # skipped unsupported collation-related bracket symbols and anchoring
@@ -231,14 +303,29 @@ class Grammar:
             assert 0 <= exact < 256
             exact = Regular(exact={exact})
         else:
-            if self.s[0] == "\\":
+            if self.s[0] == ".":
+                exact = Regular.wildcard
+            elif self.s[0] != "\\":
+                assert self.s[0] not in {"^", "$"}  # not supported
+                assert self.s[0] not in {"*", "+", "?", "(", ")", "|"}  # not
+                # supposed to be here
+                exact = Regular(exact={ord(self.s[0])})
+                if self.case_insensitive:
+                    exact = Regular(
+                        exact={ord(self.s[0].lower()), ord(self.s[0].upper())},
+                        repr_str=str(exact),  # there should be a outer repr
+                    )
+            else:
                 self.skip("\\")
                 exact_table = {
                     "n": Regular(exact={ord("\n")}),
                     "r": Regular(exact={ord("\r")}),
                     "t": Regular(exact={ord("\t")}),
                     "d": Regular(exact={ord(c) for c in digits}, repr_str="\\d"),
-                    "w": Regular(exact={ord(c) for c in ascii_letters}, repr_str="\\w"),
+                    "w": Regular(
+                        exact={ord(c) for c in ascii_letters + digits + "_"},
+                        repr_str="\\w",
+                    ),
                     "s": Regular(exact={ord(c) for c in whitespace}, repr_str="\\s"),
                 }
                 exact_table = {
@@ -249,86 +336,6 @@ class Grammar:
                     # see if there need anything more
                 }
                 exact = exact_table.get(self.s[0], Regular(exact={ord(self.s[0])}))
-            elif self.s[0] == ".":
-                exact = Regular.wildcard
-            else:
-                exact = Regular(exact={ord(self.s[0])})
-                if self.case_insensitive:
-                    exact = Regular(
-                        exact={ord(self.s[0].lower()), ord(self.s[0].upper())},
-                        repr_str=str(exact),  # there should be a outer repr
-                    )
-            self.s = self.s[1:].lstrip()
+
+            self.s = self.s[1:]
         return exact
-
-    def rule(self):
-        head = self.name()
-        guard = {}
-        priority = ProductionRule.default_priority
-        if self.s[0] == "[":
-            # TODO merge guard on same variable instead of override
-            guard = dict(Grammar.guard(part) for part in self.bracket())
-        if self.s[0] in digits:
-            priority = self.unsigned()
-        self.skip("->")
-        self.prev_item = RuleItem(terminal=Regular.epsilon)
-        item_list = self.item_list()
-        if self.prev_item.action or not item_list:
-            item_list = (self.prev_item, *item_list)
-        self.prev_item = None
-        return ProductionRule(head, guard, priority, item_list)
-
-    def item_list(self):
-        if self.s[0] == ";":
-            assert self.extract is None
-            self.skip(";")
-            return ()
-        if self.s[0] == ")":
-            assert self.extract is not None
-            # i don't fully understand the reason to assign a possible-null
-            # value returned by custom extraction action back into `p`
-            # i guess the semantic requires there must be an assignment cause
-            # that, since `p` is the only variable who can be manipulated
-            # without corrupt things by now
-            # using a placeholder to make thing explicit
-            self.append_action(((self.extract, "p"),))
-            self.extract = None
-            self.skip(")")
-            return self.item_list()
-
-        # we must do `item()` first, which may cause `prev_item` refer to a
-        # different item, then save the changed reference
-        self.prev_item, old_prev = self.item(), self.prev_item
-        item_list = self.item_list()
-        item, self.prev_item = self.prev_item, old_prev
-        return item, *item_list
-
-    def append_action(self, action):
-        assert self.prev_item is not None
-        self.prev_item = RuleItem(
-            terminal=self.prev_item.terminal,
-            nonterminal=self.prev_item.nonterminal,
-            action=compose_action(self.prev_item.action, action),
-        )
-
-    def item(self):
-        if self.s[0] == "/":
-            terminal, nonterminal = self.regex(), None
-        elif self.s[0] in ascii_letters + "_":
-            name = self.name()
-            if self.s[0] == "(":
-                self.append_action((("pos", "p"),))
-                self.extract = name
-                self.skip("(")
-                return self.item()  # assert at least one item remain (and in
-                # the extracting paren)
-
-            nonterminal, terminal = name, None
-        else:
-            assert (
-                False
-            ), f"expect terminal/nonterminal/extract: {self.s.splitlines()[0]}"
-        action = ()
-        if self.s[0] == "[":
-            action = sum((self.action(step) for step in self.bracket()), start=())
-        return RuleItem(terminal=terminal, nonterminal=nonterminal, action=action)

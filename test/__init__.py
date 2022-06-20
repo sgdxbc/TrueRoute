@@ -1,5 +1,21 @@
 """
 test/__init__.py: Collection of unit test cases.
+
+Notes about coding convention
+
+I put it here because if you check tests code, you may be the one who care this.
+
+Do not use plural. (So this directory is called `test` instead of `tests`.)
+Especially, don't name variable name with `xxxs`, use `xxx_table` for dict, 
+`xxx_set` for set, and `xxx_list` for list and tuple. (`xxx_tuple` looks stupid,
+and it is actually stupid Python who calls immutable list tuple.) The name will
+hint us about how to index into collection, whether it is ordered, etc. 
+Moreover, use `xxx_gen` for generator to hint the items are ephemeral during
+enumeration.
+
+Generally, if not noted elsewhere a function may assume the arguments are 
+immutable permanent data (e.g. not generator), and itself may return a generator
+whenever possible. Make explicit comment when the behavior would be unexpected.
 """
 from unittest import TestCase
 from spec import Grammar

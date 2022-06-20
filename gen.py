@@ -196,43 +196,43 @@ from itertools import count
 def compile_action(step, var_id):
     # user defined extraction
     if step[0] == "trace":  # preferred
-        return 1001, step[1] if isinstance(step[1], int) else var_id(step[1])
+        return 0x70, step[1] if isinstance(step[1], int) else var_id(step[1])
     if step[0] == "token":  # compatible with FlowSifter
-        return 1001, step[1] if isinstance(step[1], int) else var_id(step[1])
+        return 0x70, step[1] if isinstance(step[1], int) else var_id(step[1])
 
     # stock operation
     if step[0] == "imm":  # immediate number
-        return 100, var_id(step[1]), step[2]
+        return 0x10, var_id(step[1]), step[2]
     if step[0] == "addi":  # add counter with immediate number
         # addi dst, src, imm
-        return 101, var_id(step[1]), var_id(step[2]), step[3]
+        return 0x11, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
-        return 102, var_id(step[1]), var_id(step[2]), step[3]
+        return 0x12, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "muli":
-        return 103, var_id(step[1]), var_id(step[2]), step[3]
+        return 0x13, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "pos":
-        return 200, var_id(step[1])
+        return 0x50, var_id(step[1])
     if step[0] == "bounds":
-        return 201, var_id(step[1]), var_id(step[2])
+        return 0x51, var_id(step[1]), var_id(step[2])
     if step[0] == "skip":
-        return 202, var_id(step[1]), var_id(step[2])
+        return 0x52, var_id(step[1]), var_id(step[2])
     if step[0] == "drop_tail":
-        return (203,)
+        return (0x53,)
     if step[0] == "skip_to":
-        return 204, var_id(step[1]), var_id(step[2])
+        return 0x54, var_id(step[1]), var_id(step[2])
     if step[0] == "notify":
-        return 205, var_id(step[1]), var_id(step[2])
+        return 0x55, var_id(step[1]), var_id(step[2])
     if step[0] == "cur_byte":
-        return 206, var_id(step[1])
+        return 0x56, var_id(step[1])
     if step[0] == "cur_double_byte":
-        return 207, var_id(step[1])
+        return 0x57, var_id(step[1])
     if step[0] == "getnum":
-        return 208, var_id(step[1])
+        return 0x58, var_id(step[1])
     if step[0] == "gethex":
-        return 209, var_id(step[1])
+        return 0x59, var_id(step[1])
     if step[0] == "save":  # not sure why get commented in FlowSifter but seems
         # really fun
-        return 210, var_id(step[1]), var_id(step[2])
+        return 0x5a, var_id(step[1]), var_id(step[2])
 
     assert False, f"cannot compile operation {step[0]}"
 
