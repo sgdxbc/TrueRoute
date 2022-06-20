@@ -365,14 +365,14 @@ class Store:
         def gen():  # (G_C, G_N, G_M)
             for variable, (low, high) in guard.items():
                 id = self.variable_id(variable)
-                assert low or high
+                assert low is not None or high is not None
                 if low is not None:
                     yield (id, low, 0)
                 if high is not None:
                     yield (id, high, 1)
 
         *merged, last = gen()
-        self.g += (*((*triple, False) for triple in merged), (*last, True))
+        self.g = *self.g, *((*triple, False) for triple in merged), (*last, True)
 
     def push_action(self, action):
         if not action:
@@ -383,7 +383,7 @@ class Store:
             (compile_action(step, self.variable_id) for step in action), start=()
         )
         i = len(self.u)
-        self.u += (len(u_snippet), *u_snippet)
+        self.u = *self.u, len(u_snippet), *u_snippet
         return i
 
     def push_meta(self, transition_list):
@@ -407,49 +407,43 @@ class Store:
             # * 1 item in J_I[] to show the offset of (next) jump table in J[]
             # * 1 item in G_I[] to show the offset of (next) guard list in G[]
 
-            rule_table = {
-                rest: (1 << i, guard)
-                for i, (guard, rest) in enumerate(
-                    (guard, rest)
-                    for source, guard, *rest in enumerate(transition_list)
-                    if source == state and guard
-                )
-            }
+            rule_table = {}
+            for i, (guard, rest) in enumerate(
+                (guard, rest)
+                for source, guard, *rest in transition_list
+                if source == state and guard
+            ):
+                self.push_guard(guard)
+                rule_table = {**rule_table, tuple(rest): 1 << i}
             assert (
                 1 << len(rule_table) <= 64
             ), "rule table more than 64 entries is unpractical"
 
-            def gen_index():
-                for _, rest_list in config_list:
-                    index = 0
-                    for rule in rest_list:
-                        if rule not in rule_table:
-                            continue
-                        rule_i, guard = rule_table[rule]
-                        index += rule_i
-                        self.push_guard(guard)
-                    yield index
+            index_table = {}
+            for _, rest_list in config_list:
+                index = sum(rule_table.get(rule, 0) for rule in rest_list)
+                assert index not in index_table
+                index_table = {
+                    **index_table,
+                    index: len(self.s_i) - 1 + len(index_table),
+                }
+                construct_list = *construct_list, rest_list
 
-            index_table = {
-                index: len(self.s_i) + i - 1 for i, index in enumerate(gen_index())
-            }
-            j_snippet = (
+            self.j += tuple(
                 index_table.get(index, "impossible")
                 for index in range(1 << len(rule_table))
             )
-
-            self.j += j_snippet
-            self.s_i += (None,) * len(config_list)
+            self.s_i += (None,) * len(index_table)
             self.state_table = {**self.state_table, state: len(self.state_table)}
-            self.g_i += (len(self.g),)
-            self.j_i += (len(self.j),)
-            construct_list += (rest_list for _, rest_list in config_list)
-        self.state_table = {**self.state_table, None: len(self.state_table)}
+            self.g_i = *self.g_i, len(self.g)
+            self.j_i = *self.j_i, len(self.j)
+
+        self.state_table = {**self.state_table, "done": len(self.state_table)}
         assert len(self.g_i) == len(self.j_i) == len(self.state_table)
         return construct_list
 
     def push_automata(self, index, start_state):
-        assert all(self.s_i[: index + 1])
+        assert all(self.s_i[1 : index + 1])  # S_I[0] == 0
         assert not self.s_i[index + 1]
 
         state_list = tuple(start_state.reachable())
@@ -482,8 +476,8 @@ class Store:
         )
 
     def finalize(self):
-        assert all(self.s_i)
-        assert len(self.g_i) == len(self.j_i) == self.state_table[None] + 1
+        assert all(self.s_i[1:])
+        assert len(self.g_i) == len(self.j_i) == self.state_table["done"] + 1
         assert len(self.g) == self.g_i[-1]
         assert len(self.j) == self.j_i[-1]
         assert len(self.s) == self.s_i[-1]

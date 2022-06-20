@@ -71,7 +71,7 @@ class RuleItem:
 
     @classmethod
     def new_counter(cls):
-        counter = f"cnt_{cls.counter_count}"
+        counter = f"cnt${cls.counter_count}"
         cls.counter_count += 1
         return counter
 
@@ -831,14 +831,14 @@ def format_str(transition_list):
         # the field width is designed for 80 width terminal, only keep toy
         # transitions in mind
         # real world transitions are too complex to be printed nicely
-        yield "{:8}{:18}{:4}{:12}{:30}{:8}".format(
+        yield "{:8}{:16}{:4}{:12}{:32}{:8}".format(
             "Source", "Guard", "Pri", "Regular", "Action", "Target"
         )
         for source, guard, priority, regular, action, target in transition_list:
             target = target or "(accept)"
             yield (
-                f"{source:8}{gen.guard_str(guard):18}{priority:<4}"
-                f"{str(regular):12}{gen.action_str(action):30}{target:8}"
+                f"{source:8}{gen.guard_str(guard):16}{priority:<4}"
+                f"{str(regular):12}{gen.action_str(action):32}{target:8}"
             )
 
     return "\n".join(gen_line())

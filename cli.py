@@ -22,7 +22,8 @@ else:
     print("usage: cli.py [ccfg | crg | ca] {extraction spec.} [protocol spec. ...]")
     sys.exit()
 
-extr_grammar = pathlib.Path(extr_grammar).read_text(encoding="utf-8")
+extr_path = pathlib.Path(extr_grammar)
+extr_grammar = extr_path.read_text(encoding="utf-8")
 grammar = (pathlib.Path(gram).read_text(encoding="utf-8") for gram in grammar)
 
 extr_grammar = tuple(spec.Grammar(extr_grammar.lstrip() + "\n"))
@@ -49,4 +50,23 @@ if command == "ca":
                 print(f"  {line}")
     sys.exit()
 
-print("gen: work in progress")
+assert command == "gen"
+store = gen.Store()
+for i, auto in enumerate(store.push_meta(tuple(grammar))):
+    store.push_automata(i, lpdfa.construct(auto))
+ESCAPE = 0x33  # not using 0xff since that may be more common
+# https://space.bilibili.com/351609538
+with open(extr_path.with_suffix(".troute"), "wb") as f:
+    f.write(bytes((0x01, 0x04, 0x85, 0x96)))  # magic number: steins gate
+    number_u8, number_u32 = 0, 0
+    for n in store.finalize():
+        assert isinstance(n, int), str(n)
+        if n > 0xFF or n == ESCAPE:
+            f.write(bytes((ESCAPE,)))
+            f.write(n.to_bytes(4, "big"))
+            number_u32 += 1
+        else:
+            f.write(bytes((n,)))
+            number_u8 += 1
+print(f'Single byte: {number_u8}')
+print(f'Escaped: {number_u32}')
