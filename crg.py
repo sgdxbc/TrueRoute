@@ -415,7 +415,7 @@ def approx(grammar):
             (
                 RuleItem(
                     terminal=Regular.new_union(start),
-                    action=(("addi", counter, counter, 1),),
+                    action=(("imm", "$1", 1), ("add", counter, counter, "$1")),
                 ),
                 approx_item,
             ),
@@ -427,7 +427,7 @@ def approx(grammar):
             (
                 RuleItem(
                     terminal=Regular.new_union(stop),
-                    action=(("subi", counter, counter, 1),),
+                    action=(("imm", "$1", 1), ("sub", counter, counter, "$1")),
                 ),
                 approx_item,
             ),
@@ -731,7 +731,8 @@ varstring = (
         ProductionRule.default_priority,
         (
             RuleItem(
-                terminal=Regular.new_literal(b"0"), action=(("muli", "c", "c", 2),)
+                terminal=Regular.new_literal(b"0"),
+                action=(("imm", "$2", 2), ("mul", "c", "c", "$2")),
             ),
             symbol_b,
         ),
@@ -743,7 +744,12 @@ varstring = (
         (
             RuleItem(
                 terminal=Regular.new_literal(b"1"),
-                action=(("muli", "c", "c", 2), ("addi", "c", "c", 1)),
+                action=(
+                    ("imm", "$2", 2),
+                    ("mul", "c", "c", "$2"),
+                    ("imm", "$2", 1),
+                    ("add", "c", "c", "$2"),
+                ),
             ),
             symbol_b,
         ),
@@ -759,7 +765,10 @@ varstring = (
         {"c": (1, None)},
         ProductionRule.default_priority,
         (
-            RuleItem(terminal=Regular.wildcard, action=(("subi", "c", "c", 1),)),
+            RuleItem(
+                terminal=Regular.wildcard,
+                action=(("imm", "$2", 1), ("sub", "c", "c", "$2")),
+            ),
             symbol_v,
         ),
     ),

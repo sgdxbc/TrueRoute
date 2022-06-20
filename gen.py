@@ -204,12 +204,12 @@ def compile_action(step, var_id):
     # stock operation
     if step[0] == "imm":  # immediate number
         return 0x10, var_id(step[1]), step[2]
-    if step[0] == "addi":  # add counter with immediate number
-        return 0x11, var_id(step[1]), var_id(step[2]), step[3]
-    if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
-        return 0x12, var_id(step[1]), var_id(step[2]), step[3]
-    if step[0] == "muli":
-        return 0x13, var_id(step[1]), var_id(step[2]), step[3]
+    if step[0] == "add":
+        return 0x11, var_id(step[1]), var_id(step[2]), var_id(step[3])
+    if step[0] == "sub":
+        return 0x12, var_id(step[1]), var_id(step[2]), var_id(step[3])
+    if step[0] == "mul":
+        return 0x13, var_id(step[1]), var_id(step[2]), var_id(step[3])
 
     if step[0] == "pos":
         return 0x50, var_id(step[1])

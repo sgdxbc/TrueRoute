@@ -259,16 +259,14 @@ class Grammar:
     def regex_escape(self):
         if self.s[:2] == "\\x":
             self.skip("\\x")
-            exact = self.unsigned()
-            assert 0 <= exact < 256
-            exact = Regular(exact={exact})
+            # support single hex digit?
+            exact = Regular(exact={int(self.s[:2], base=16)})
+            self.s = self.s[2:]
         else:
             if self.s[0] == ".":
                 exact = Regular.wildcard
             elif self.s[0] != "\\":
                 assert self.s[0] not in {"^", "$"}  # not supported
-                assert self.s[0] not in {"*", "+", "?", "(", ")", "|"}  # not
-                # supposed to be here
                 exact = Regular(exact={ord(self.s[0])})
                 if self.case_insensitive:
                     exact = Regular(
@@ -338,43 +336,36 @@ class Grammar:
             return var, ((name, var),)
         if name in {"skip", "skip_to", "notify"}:
             self.skip("(")
-            arg1, action = self.expr("$1")
+            arg1, action = self.expr0("$1")
             self.skip(")")
             return var, (*action, (name, var, arg1))
         if name in {"bounds", "save"}:
             self.skip("(")
-            arg1, action1 = self.expr("$1")
+            arg1, action1 = self.expr0("$1")
             self.skip(",")
-            arg2, action2 = self.expr("$2")
+            arg2, action2 = self.expr0("$2")
             self.skip(")")
             return var, (*action1, *action2, (name, var, arg1, arg2))
 
         if self.s[0] == "(":  # user defined extraction
             self.skip("(")
-            arg1, action = self.expr("$1")
+            arg1, action = self.expr0("$1")
             self.skip(")")
             return var, (*action, (name, var, arg1))
 
         return name, ()
 
     def expr_infix(self, var, op_table, inner):
-        expr, action = inner(var)
+        expr, action = inner(var)  # in place to save tmp
         while op := next((op for op in op_table if self.s.startswith(op)), None):
             self.skip(op)
             another_expr, another_action = inner("$2")
-            # not very good, but i don't want to deal with it
-            if len(another_action) == 1 and another_action[0][0] == "imm":
-                immediate = another_action[0][2]
-            else:
-                assert len(action) == 1 and action[0][0] == "imm"
-                immediate = action[0][2]
-                expr = another_expr
-            action = *action, (op_table[op], var, expr, immediate)
+            action = *action, *another_action, (op_table[op], var, expr, another_expr)
             expr = var
         return expr, action
 
     def expr1(self, var):
-        return self.expr_infix(var, {"*": "muli"}, self.expr2)
+        return self.expr_infix(var, {"*": "mul"}, self.expr2)
 
     def expr0(self, var):
-        return self.expr_infix(var, {"+": "addi", "-": "subi"}, self.expr1)
+        return self.expr_infix(var, {"+": "add", "-": "sub"}, self.expr1)
