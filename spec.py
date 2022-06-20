@@ -94,48 +94,6 @@ class Grammar:
             return variable.strip(), (None, high)
         assert False, f"unsupport guard {s}"
 
-    @staticmethod
-    def action(s):
-        dst, expr = s.split(":=")
-        dst, expr = dst.strip(), expr.strip()
-        # i start to feel lazy... complete a expr tower for me, thanks
-        if expr.isdigit():
-            return (("imm", dst, int(expr)),)
-        # TODO replace `re` with `lpdfa`, let's bootstrap ^o^
-        if m := match(r"(\w+)\s*\*\s*(\w+)\s*(\+\s*(\w+))?", expr):
-            mul, src = (int(m[1]), m[2]) if m[1].isdigit() else (int(m[2]), m[1])
-            if m[4]:
-                return ("muli", dst, src, mul), ("addi", dst, dst, int(m[4]))
-            else:
-                return (("muli", dst, src, mul),)
-        if m := match(r"(\w+)\s*\+\s*(\w+)\s*\*\s*(\w+)", expr):
-            mul, src = (int(m[2]), m[3]) if m[2].isdigit() else (int(m[3]), m[2])
-            add = int(m[1])
-            return ("muli", dst, src, mul), ("addi", dst, dst, add)
-        if m := match(r"(\w+)\s*-\s*(\w+)", expr):
-            return (("subi", dst, m[1], int(m[2])),)
-        if m := match(r"(\w+)\s*\(\s*((\w+\s*,\s*)*(\w+)?)\s*\)", expr):
-            arg = tuple(a.strip() for a in m[2].split(",") if a.strip())
-            stmt = False
-            if m[1] in {"drop_tail"}:
-                assert not arg
-                stmt = True
-            # what the fuck is the standard of adding underscore or not
-            elif m[1] in {"pos", "cur_byte", "cur_double_byte", "getnum", "gethex"}:
-                assert not arg
-            elif m[1] in {"skip", "skip_to", "notify"}:
-                assert len(arg) == 1
-            elif m[1] in {"bounds", "save"}:
-                assert len(arg) == 2
-                stmt = True
-            else:  # assume invoke extraction as a normal action
-                assert len(arg) == 1
-                arg = (int(arg[0]),) if arg[0].isdigit() else arg
-                stmt = True
-            return ((m[1], *arg),) if stmt else ((m[1], dst, *arg),)
-
-        assert False, f"unsupported action: {expr}"
-
     def rule(self):
         head = self.name()
         guard = {}
@@ -166,7 +124,7 @@ class Grammar:
             # that, since `p` is the only variable who can be manipulated
             # without corrupt things by now
             # using a placeholder to make thing explicit
-            self.append_action(((self.extract, "p"),))
+            self.append_action(((self.extract, "_", "p"),))
             self.extract = None
             self.skip(")")
             return self.item_list()
@@ -205,7 +163,9 @@ class Grammar:
             ), f"expect terminal/nonterminal/extract: {self.s.splitlines()[0]}"
         action = ()
         if self.s[0] == "[":
-            action = sum((self.action(step) for step in self.bracket()), start=())
+            self.skip("[")
+            action = self.action()
+            self.skip("]")
         return RuleItem(terminal=terminal, nonterminal=nonterminal, action=action)
 
     # operator prcedence following POSIX extended regular expression syntax
@@ -339,3 +299,82 @@ class Grammar:
 
             self.s = self.s[1:]
         return exact
+
+    def action(self):  # not skip barcket pair
+        if self.s[0] == "]":
+            return ()
+        step = self.action_step()
+        if self.s[0] == ";":
+            self.skip(";")
+        return *step, *self.action()
+
+    def action_step(self):
+        var = self.name()
+        self.skip(":=")
+        expr, action = self.expr0(var)
+        if expr == var:
+            return action
+        return *action, ("addi", var, expr, 0)
+
+    def expr2(self, var):
+        if self.s[0] in digits:
+            return var, (("imm", var, self.unsigned()),)
+
+        # consider support parenthese
+
+        assert self.s[0] in ascii_letters + "_"
+        name = self.name()
+        # underscore inconsistency...why
+        if name in {
+            "pos",
+            "drop_tail",
+            "cur_byte",
+            "cur_double_byte",
+            "getnum",
+            "gethex",
+        }:
+            self.skip("(")
+            self.skip(")")
+            return var, ((name, var),)
+        if name in {"skip", "skip_to", "notify"}:
+            self.skip("(")
+            arg1, action = self.expr("$1")
+            self.skip(")")
+            return var, (*action, (name, var, arg1))
+        if name in {"bounds", "save"}:
+            self.skip("(")
+            arg1, action1 = self.expr("$1")
+            self.skip(",")
+            arg2, action2 = self.expr("$2")
+            self.skip(")")
+            return var, (*action1, *action2, (name, var, arg1, arg2))
+
+        if self.s[0] == "(":  # user defined extraction
+            self.skip("(")
+            arg1, action = self.expr("$1")
+            self.skip(")")
+            return var, (*action, (name, var, arg1))
+
+        return name, ()
+
+    def expr_infix(self, var, op_table, inner):
+        expr, action = inner(var)
+        while op := next((op for op in op_table if self.s.startswith(op)), None):
+            self.skip(op)
+            another_expr, another_action = inner("$2")
+            # not very good, but i don't want to deal with it
+            if len(another_action) == 1 and another_action[0][0] == "imm":
+                immediate = another_action[0][2]
+            else:
+                assert len(action) == 1 and action[0][0] == "imm"
+                immediate = action[0][2]
+                expr = another_expr
+            action = *action, (op_table[op], var, expr, immediate)
+            expr = var
+        return expr, action
+
+    def expr1(self, var):
+        return self.expr_infix(var, {"*": "muli"}, self.expr2)
+
+    def expr0(self, var):
+        return self.expr_infix(var, {"+": "addi", "-": "subi"}, self.expr1)

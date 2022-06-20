@@ -44,7 +44,9 @@ class RuleItem:
         assert terminal is None or isinstance(terminal, Regular)
         assert nonterminal is None or isinstance(nonterminal, str)
         action = action or ()
-        assert isinstance(action, tuple)  # TODO and all item is Action instance
+        assert isinstance(action, tuple) and (
+            all(isinstance(step, tuple) and isinstance(step[0], str) for step in action)
+        )
         self.terminal = terminal
         self.nonterminal = nonterminal
         self.action = action
@@ -773,7 +775,7 @@ extr_varstring = (
         "X",
         {},
         ProductionRule.default_priority,
-        (symbol_b, RuleItem(nonterminal="V", action=("vstr",))),
+        (symbol_b, RuleItem(nonterminal="V", action=(("vstr", "_", "p"),))),
     ),
 )
 dyck = (
@@ -807,7 +809,7 @@ extr_dyck = (
         ProductionRule.default_priority,
         (
             RuleItem(terminal=Regular.new_literal(b"["), action=(("pos", "p"),)),
-            RuleItem(nonterminal="S", action=(("param", "p"),)),
+            RuleItem(nonterminal="S", action=(("param", "_", "p"),)),
             RuleItem(terminal=Regular.new_literal(b"]")),
             RuleItem(nonterminal="S"),
         ),

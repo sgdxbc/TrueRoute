@@ -193,31 +193,32 @@ all combination with !p3        impossible
 from itertools import count
 
 
+# universally, step[1] is place variable name, i.e. name before `:=`
 def compile_action(step, var_id):
     # user defined extraction
     if step[0] == "trace":  # preferred
-        return 0x70, step[1] if isinstance(step[1], int) else var_id(step[1])
+        return 0x70, var_id(step[1]), var_id(step[2])
     if step[0] == "token":  # compatible with FlowSifter
-        return 0x70, step[1] if isinstance(step[1], int) else var_id(step[1])
+        return 0x70, var_id(step[1]), var_id(step[2])
 
     # stock operation
     if step[0] == "imm":  # immediate number
         return 0x10, var_id(step[1]), step[2]
     if step[0] == "addi":  # add counter with immediate number
-        # addi dst, src, imm
         return 0x11, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "subi":  # ...so we don't need to have negative numbers, yay
         return 0x12, var_id(step[1]), var_id(step[2]), step[3]
     if step[0] == "muli":
         return 0x13, var_id(step[1]), var_id(step[2]), step[3]
+
     if step[0] == "pos":
         return 0x50, var_id(step[1])
     if step[0] == "bounds":
-        return 0x51, var_id(step[1]), var_id(step[2])
+        return 0x51, var_id(step[1]), var_id(step[2]), var_id(step[3])
     if step[0] == "skip":
         return 0x52, var_id(step[1]), var_id(step[2])
     if step[0] == "drop_tail":
-        return (0x53,)
+        return 0x53, var_id(step[1])
     if step[0] == "skip_to":
         return 0x54, var_id(step[1]), var_id(step[2])
     if step[0] == "notify":
@@ -232,7 +233,7 @@ def compile_action(step, var_id):
         return 0x59, var_id(step[1])
     if step[0] == "save":  # not sure why get commented in FlowSifter but seems
         # really fun
-        return 0x5a, var_id(step[1]), var_id(step[2])
+        return 0x5A, var_id(step[1]), var_id(step[2]), var_id(step[3])
 
     assert False, f"cannot compile operation {step[0]}"
 
