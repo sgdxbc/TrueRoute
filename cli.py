@@ -26,8 +26,8 @@ extr_path = pathlib.Path(extr_grammar)
 extr_grammar = extr_path.read_text(encoding="utf-8")
 grammar = (pathlib.Path(gram).read_text(encoding="utf-8") for gram in grammar)
 
-extr_grammar = tuple(spec.Grammar(extr_grammar.lstrip() + "\n"))
-grammar = sum((tuple(spec.Grammar(gram.lstrip() + "\n")) for gram in grammar), start=())
+extr_grammar = tuple(spec.Grammar(extr_grammar))
+grammar = sum((tuple(spec.Grammar(gram)) for gram in grammar), start=())
 if command == "ccfg":
     for rule in extr_grammar + grammar:
         print(rule)
@@ -68,5 +68,5 @@ with open(extr_path.with_suffix(".troute"), "wb") as f:
         else:
             f.write(bytes((n,)))
             number_u8 += 1
-print(f'Single byte: {number_u8}')
-print(f'Escaped: {number_u32}')
+print(f"Single byte: {number_u8}")
+print(f"Escaped: {number_u32}")

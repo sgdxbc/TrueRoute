@@ -17,8 +17,7 @@ methods of `State` instance:
 TODO: automata minimization
 """
 from itertools import count
-from crg import Regular
-from gen import action_str
+from object import Regular, action_str
 
 
 class State:

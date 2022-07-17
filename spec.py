@@ -3,21 +3,17 @@ spec.py: Frontend of Counting Context Free Grammar, the grammar of protocol and
 extraction specifications.
 
 The main interface is `Grammar(s)`, which accept a string of specification text.
-The string `s` must start with meaningful character including comment head, i.e.
-be `lstrip`ed. It also must end with at least one new line.
-
 `Grammar` instance is iterable of `ProductionRule`. Wrap it into `tuple()` in
 order to pass into `crg.optimize`.
 """
 from string import ascii_letters, digits, whitespace
 from crg import ProductionRule, RuleItem, Regular, compose_action
-from re import match
 
 
 # you should put recusive descent as my epitaph
 class Grammar:
     def __init__(self, s):
-        self.s = s
+        self.s = s.lstrip() + "\n"
         # maintain line number or something for a better error reporting
 
         self.prev_item = None
@@ -40,6 +36,7 @@ class Grammar:
         for i in range(1, len(self.s)):
             if self.s[i] not in ascii_letters + digits + "_":
                 break
+        assert not self.regex_mode
         name, self.s = self.s[:i], self.s[i:].lstrip()
         return name
 
@@ -52,7 +49,9 @@ class Grammar:
     def bracket(self):
         self.skip("[")
         # there should not be any possible nested bracket i guess...
+        # TODO don't cheat on this
         raw, s = self.s.split("]", maxsplit=1)
+        assert not self.regex_mode
         self.s = s.lstrip()
         for part in raw.split(";"):
             yield part.strip()

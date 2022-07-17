@@ -54,11 +54,11 @@ class TestSpec(TestCase):
     """
 
     def test_grammar(self):
-        self.assertEqual(tuple(Grammar(TestSpec.varstring.lstrip())), varstring)
-        self.assertEqual(tuple(Grammar(TestSpec.dyck.lstrip())), dyck)
+        self.assertEqual(tuple(Grammar(TestSpec.varstring)), varstring)
+        self.assertEqual(tuple(Grammar(TestSpec.dyck)), dyck)
 
     def test_extraction(self):
-        self.assertEqual(tuple(Grammar(TestSpec.extr_dyck.lstrip())), extr_dyck)
+        self.assertEqual(tuple(Grammar(TestSpec.extr_dyck)), extr_dyck)
 
 
 class TestCRG(TestCase):

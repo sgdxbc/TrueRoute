@@ -112,18 +112,18 @@ TODO: find a proper anology for normal/good end
 12. set s to 1, goto #1
 
 Because certain combination of rules are impossible to be enabled at the same
-time, not all index in jump table J[] can map to a valid LPDFA index, because
-those impossible LPDFA are not constructed at all. This implementation uses some
-value >= len(A[]) to fill these "holes", which may be used for assertion in a 
-debug build.
+time, not all index in jump table J[] can map to a valid LPDFA index, and those 
+impossible LPDFA are not constructed at all. This implementation uses some value 
+>= len(A[]) to fill these "holes", which may be used for assertion in a debug 
+build.
 
 ----
 
 Serialization specification
 
 A series of discrete meta numbers followed by the lists
-* Value range of d_dst, which is also len(G_I[]) - 1, len(J_I[]) - 1 and 
-  DST_ACC, number of CA states
+* Value range of d_dst, which is also len(G_I[]) - 1, len(J_I[]) - 1, DST_ACC, 
+  number of CA states
 * Value range of a, which is also len(A[]) - 1, number of LPDFA instances
 * len(U[])
 * G_I[], J_I[] and A[]
@@ -134,7 +134,7 @@ A series of discrete meta numbers followed by the lists
   also S_I[])
 * S_JMP[] whose length is A[-1] * 256
 
-In conclusion the three index table G_I[], J_I[] and A[] all have one more item
+A little note: the three index table G_I[], J_I[] and A[] all have one more item
 than expected. They maintain an invariant that their first item is always 0, and
 their last item is always the length of the list they are indexing into. It is
 possible to shift out the first item, but I would keep them rather than 
@@ -146,9 +146,9 @@ Side node about LPDFA indexing
 
 In paper section VI.B three strategies are proposed for LPDFA indexing: index by
 rule, index by predicate (guard), and optimal decision tree. This implementation
-provides procedures of the first two. Index by rule is actually used to generate
-serialized CA following the paper author's choice, which is behind the main
-interface and simulating execution model.
+provides procedures of the first two. Index by rule is the strategy actually 
+used to generate serialized CA following the paper author's choice. It is behind
+the main interface and is integrated into simulating execution model.
 
 Alternatively, `relevant(transition_list)` do index by predicate: it generates
 a list of `(source state, configuration generator)`, where the second element
@@ -191,76 +191,7 @@ Although index by rule is preferred, the `relevant` is still provided because:
 all combination with !p3        impossible
 """
 from itertools import count
-
-
-# universally, step[1] is place variable name, i.e. name before `:=`
-def compile_action(step, var_id):
-    # user defined extraction
-    if step[0] == "trace":  # preferred
-        return 0x70, var_id(step[1]), var_id(step[2])
-    if step[0] == "token":  # compatible with FlowSifter
-        return 0x70, var_id(step[1]), var_id(step[2])
-
-    # stock operation
-    if step[0] == "imm":  # immediate number
-        return 0x10, var_id(step[1]), step[2]
-    if step[0] == "add":
-        return 0x11, var_id(step[1]), var_id(step[2]), var_id(step[3])
-    if step[0] == "sub":
-        return 0x12, var_id(step[1]), var_id(step[2]), var_id(step[3])
-    if step[0] == "mul":
-        return 0x13, var_id(step[1]), var_id(step[2]), var_id(step[3])
-
-    if step[0] == "pos":
-        return 0x50, var_id(step[1])
-    if step[0] == "bounds":
-        return 0x51, var_id(step[1]), var_id(step[2]), var_id(step[3])
-    if step[0] == "skip":
-        return 0x52, var_id(step[1]), var_id(step[2])
-    if step[0] == "drop_tail":
-        return 0x53, var_id(step[1])
-    if step[0] == "skip_to":
-        return 0x54, var_id(step[1]), var_id(step[2])
-    if step[0] == "notify":
-        return 0x55, var_id(step[1]), var_id(step[2])
-    if step[0] == "cur_byte":
-        return 0x56, var_id(step[1])
-    if step[0] == "cur_double_byte":
-        return 0x57, var_id(step[1])
-    if step[0] == "getnum":
-        return 0x58, var_id(step[1])
-    if step[0] == "gethex":
-        return 0x59, var_id(step[1])
-    if step[0] == "save":  # not sure why get commented in FlowSifter but seems
-        # really fun
-        return 0x5A, var_id(step[1]), var_id(step[2]), var_id(step[3])
-
-    assert False, f"cannot compile operation {step[0]}"
-
-
-def action_str(action):
-    def step_str(step):
-        op, *arg = step
-        if not arg:
-            return op
-        return op + " " + ", ".join(str(a) for a in arg)
-
-    return "; ".join(step_str(step) for step in action)
-
-
-def guard_str(guard):
-    if not guard:
-        return "true"
-
-    def bound_str(bound):
-        low, high = bound
-        low = str(low) if low is not None else ""
-        high = str(high) if high is not None else ""
-        return f"{low}..{high}"
-
-    return "; ".join(
-        f"{variable} in {bound_str(bound)}" for variable, bound in guard.items()
-    )
+from object import compile_action
 
 
 def split_guard(transition_list):
