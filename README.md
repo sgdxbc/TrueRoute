@@ -1,6 +1,6 @@
 **TrueRoute is an implementation of *FlowSifter*<sup>[1]</sup> in Python.**
 
-Developed with Python 3.10.5, but should work on many recent versions.
+Developed with Python 3.10.4, but should work on many recent versions.
 
 **Sanity check.** Run `python -m unittest`. ![Workflow status](https://github.com/sgdxbc/TrueRoute/actions/workflows/python-app.yml/badge.svg)
 

@@ -34,12 +34,13 @@ rules of a source state may be enabled by current counter values. One possible
 work flow is to postprocess the rule list with `gen.relevant`, which is the way 
 adpoted by cli's `ca` command. See `gen` module document in advance.
 """
-import gen
 from object import (
     ProductionRule,
     Regular,
     RuleItem,
+    action_str,
     compose_action,
+    guard_str,
     merge_predicate,
     varstring,
     extr_varstring,
@@ -389,8 +390,8 @@ def format_str(transition_list):
         for source, guard, priority, regular, action, target in transition_list:
             target = target or "(accept)"
             yield (
-                f"{source:8}{gen.guard_str(guard):16}{priority:<4}"
-                f"{str(regular):12}{gen.action_str(action):32}{target:8}"
+                f"{source:8}{guard_str(guard):16}{priority:<4}"
+                f"{str(regular):12}{action_str(action):32}{target:8}"
             )
 
     return "\n".join(gen_line())

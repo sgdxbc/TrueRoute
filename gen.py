@@ -12,8 +12,13 @@ interface is designed in a little bit verbose way, because I want to keep things
 modular, to e.g. allow perform unit test on `gen` independently in respect to
 the correctness of `lpdfa`.
 
+`Store.finalize` guarantee to produce deterministic serialized sequence. Not
+only hold basic correctness that every run generate serialized CA with same
+functionality, but also the generated sequence will be exact same for the same
+input, i.e. CCFG source file. This property may be helpful for regression tests.
+
 The following document explain what data structures are serialized, how to use
-these data structure, and detial serialization format.
+these data structure, and detail serialization format.
 
 ----
 
@@ -190,8 +195,9 @@ Although index by rule is preferred, the `relevant` is still provided because:
 !p1 & !p2 &  p3     either x >= 3 or y < 0      rule 3
 all combination with !p3        impossible
 """
+from functools import cmp_to_key
 from itertools import count
-from object import compile_action
+from object import compare_guard, compile_action
 
 
 def split_guard(transition_list):
@@ -236,11 +242,14 @@ def split_guard(transition_list):
 
 
 def relevant(transition_list):
-    import sys
+    def deterministic_source_gen():
+        (start, *_), *_ = transition_list
+        yield start
+        yield from sorted({source for source, *_ in transition_list if source != start})
 
-    assert sys.version_info >= (3, 7)  # for ordered dict implementation
-    for source in dict.fromkeys(source for source, *_ in transition_list):
+    for source in deterministic_source_gen():
         # {rest => guard set}, where guard sets may intersect with each other
+        # e.g. R1 => {G1, G2, G3}, R2 => {G2, G3, G4}
         split_table = dict(
             split_guard(
                 tuple(
@@ -250,24 +259,52 @@ def relevant(transition_list):
                 )
             )
         )
+        # {G1, G2, G3, G4}
         guard_set = {guard for split_set in split_table.values() for guard in split_set}
 
-        # a set of [rest], each [rest] is enabled by either one guard of a guard
-        # set, and each guard set does not intersect with others
+        # a set of [rest] i.e. list of rest, for each [rest], all contained rest
+        # are enabled by every guard of a certain guard set.
+        # guard sets of each [rest] does not intersect with each other
+        # {
+        #     [R1] (enabled by {G1}),
+        #     [R2] (enabled by {G4}),
+        #     [R1, R2] (enabled by {G2, G3}),
+        # }
+        # the algorithm here is to calculate enabled [rest] for every single
+        # guard in guard set, so [R1, R2] will appear twice for both G2 and G3
+        # then collect result with a set to deduplicate
         relevant_set = {
             tuple(rest for rest, split_set in split_table.items() if guard in split_set)
             for guard in guard_set
         }
-        yield source, (
+
+        relevant_list = (
             (
-                (
-                    dict(guard)
-                    for guard in guard_set
-                    if all(guard in split_table[rest] for rest in rest_list)
+                sorted(
+                    (
+                        dict(guard)
+                        for guard in guard_set
+                        if all(guard in split_table[rest] for rest in rest_list)
+                    ),
+                    key=cmp_to_key(compare_guard),
                 ),
                 rest_list,
             )
             for rest_list in relevant_set
+        )
+
+        def compare_sorted_guard_list(guard_list, another_guard_list):
+            if not guard_list:
+                return -1
+            if not another_guard_list:
+                return 1
+            return compare_guard(
+                guard_list[0], another_guard_list[0]
+            ) or compare_sorted_guard_list(guard_list[1:], another_guard_list[1:])
+
+        yield source, sorted(
+            relevant_list,
+            key=lambda pair: cmp_to_key(compare_sorted_guard_list)(pair[0]),
         )
 
 

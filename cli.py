@@ -7,6 +7,7 @@ import spec
 import crg
 import lpdfa
 import gen
+import object
 
 assert __name__ == "__main__"
 
@@ -43,7 +44,7 @@ if command == "ca":
         for guard_gen, transition_list in config_list:
             print(f"from {source}")
             for guard in guard_gen:
-                print(f"  if {gen.guard_str(guard)}")
+                print(f"  if {object.guard_str(guard)}")
             for line in lpdfa.format_str(
                 lpdfa.construct(tuple(transition_list))
             ).splitlines():

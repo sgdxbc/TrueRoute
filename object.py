@@ -70,6 +70,28 @@ def guard_str(guard):
     )
 
 
+def compare_guard(guard, another_guard):
+    for variable in sorted(guard.keys() | another_guard.keys()):
+        if variable in guard and variable not in another_guard:
+            return -1
+        if variable not in guard and variable in another_guard:
+            return 1
+        low, high = guard[variable]
+        another_low, another_high = another_guard[variable]
+        # None = -inf
+        if another_low is not None and (low is None or low < another_low):
+            return -1
+        if low is not None and (another_low is None or another_low < low):
+            return 1
+        # None = inf
+        if high is not None and (another_high is None or high < another_high):
+            return -1
+        if another_high is not None and (high is None or another_high < high):
+            return 1
+        assert low == another_low and high == another_high
+    return 0
+
+
 class RuleItem:
     def __init__(self, terminal=None, nonterminal=None, action=None):
         assert (terminal is None) != (nonterminal is None)
